@@ -20,7 +20,7 @@
   ],
   "memories": [
     {
-      "name": "dining_memory",
+      "name": "dining_memory_v2",
       "eventExpiryDuration": 30,
       "strategies": [
         {
