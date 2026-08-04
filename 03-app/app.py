@@ -15,8 +15,8 @@ import streamlit as st
 import boto3
 from dotenv import load_dotenv
 
-# .env 파일 로드 (없으면 환경변수에서 읽음)
-load_dotenv()
+# .env 파일 로드 (항상 .env 값을 우선 적용)
+load_dotenv(override=True)
 
 # ── 설정 ──────────────────────────────────────────────
 RUNTIME_ARN = os.environ.get("RUNTIME_ARN", "")
@@ -312,10 +312,7 @@ def invoke_runtime(prompt: str, session_id: str, actor_id: str) -> tuple[str, li
         # namespace 정확 매치 + namespacePath 하위 검색 모두 시도
         search_targets = [
             {"namespace": f"/users/{actor_id}/preferences"},
-            {"namespace": f"/users/{actor_id}/preferences/"},
             {"namespace": f"/users/{actor_id}/facts"},
-            {"namespace": f"/users/{actor_id}/facts/"},
-            {"namespacePath": f"/users/{actor_id}/"},
         ]
         for target in search_targets:
             try:
