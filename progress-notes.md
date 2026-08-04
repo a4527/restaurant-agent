@@ -1079,10 +1079,9 @@ REACT_APP_API_URL → npm run build → 프론트엔드에 번들
 
 | 순서 | 작업 | 설명 |
 |------|------|------|
-| 1 | CI/CD 배포 완료 확인 | GitHub Actions에서 agent/api/frontend 워크플로우 통과 확인 |
-| 2 | 프로덕션 풀기능 테스트 | CloudFront URL에서 예약/비용/취향 기억 동작 확인 |
-| 3 | Memory 임계값 최적화 | `test_memory_threshold.py` 실행하여 중복 감지 임계값 조정 |
-| 4 | eval 임계값 최적화 | `test_eval_threshold.py` 실행하여 배포 기준점 검증 |
+| 1 | Gateway 보안 강화 | 현재 `authorizer-type: NONE` → `AWS_IAM`으로 전환 |
+| 2 | eval 임계값 최적화 | `test_eval_threshold.py` 실행하여 배포 기준점 검증 |
+| 3 | MCP 예약 데이터 영속화 | mcp_server.py 예약 데이터를 DynamoDB 등으로 저장 |
 
 ---
 

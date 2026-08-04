@@ -336,19 +336,19 @@ git push origin main
 
 - **Runtime 풀기능화**: `main.py`에 MCP(예약/비용), Memory, Web Search Gateway 통합
 - **프론트엔드 업그레이드**: 다중 세션 관리, 도구 호출 로그, Memory 현황, 식당 카드 UI
-- **Lambda 개선**: session_id/actor_id/conversation_context 전달, tool_calls 반환
-- **평가 게이트 확장**: 예약/비용 케이스 추가 (총 5케이스)
-- **setup.sh 개선**: Gateway/Memory ID를 main.py에도 자동 반영
-- **Memory 버그 수정**: API 응답 키 `memoryRecords` → `memoryRecordSummaries` 수정
+- **Lambda 개선**: session_id/actor_id/conversation_context 전달, tool_calls 반환, MEMORY_ID 환경변수 수정
+- **Memory 품질 개선**: Memory 과의존 방지(참고용 전환), 자동 예약 방지, 중복 임계값 0.50, 상반된 취향 자동 삭제
+- **Memory 오염 수정**: namespacePath 제거로 원본 이벤트 오염 방지, Lambda MEMORY_ID 불일치 수정
+- **Hallucination 방지**: search_restaurants 결과에 없는 식당 언급 금지 프롬프트 강화
+- **이미지 정리**: progress-notes.md 이미지 파일 `image/` 폴더로 이동
 
 ### 로드맵
 
 | 순서 | 작업 | 설명 |
 |------|------|------|
-| 1 | 프로덕션 풀기능 테스트 | CloudFront URL에서 예약/Memory/WebSearch 동작 확인 |
-| 2 | Memory 임계값 최적화 | `test_memory_threshold.py`로 중복 감지 임계값 조정 |
-| 3 | eval 임계값 최적화 | `test_eval_threshold.py`로 배포 기준점 검증 |
-| 4 | Gateway 보안 강화 | 현재 `authorizer-type: NONE` → `AWS_IAM`으로 전환 |
+| 1 | Gateway 보안 강화 | 현재 `authorizer-type: NONE` → `AWS_IAM`으로 전환 |
+| 2 | eval 임계값 최적화 | `test_eval_threshold.py`로 배포 기준점 검증 |
+| 3 | MCP 예약 데이터 영속화 | mcp_server.py 예약 데이터를 DynamoDB 등으로 저장 |
 
 ---
 
@@ -361,6 +361,10 @@ git push origin main
 | ✅ | RUNTIME_ARN SSM 저장 시 문자열 잘림 | AWS CLI 직접 조회로 변경하여 해결 |
 | ✅ | CDK 배포 시 Memory/Gateway 충돌 | agentcore.json에서 제거, CLI로 별도 관리 |
 | ✅ | Web Search 도구명 `web-search___WebSearch` | `@tool` 래핑으로 `WebSearch`로 단순화 |
+| ✅ | Memory 이전 취향 계속 반영 | namespacePath 제거 + Lambda MEMORY_ID 불일치 수정 |
+| ✅ | Memory 과의존 (일식 좋아 → 스시만 추천) | Memory를 참고용으로 전환, 현재 요청 우선 프롬프트 적용 |
+| ✅ | 자동 예약 실행 | 명시적 "예약해줘" 요청 시에만 create_reservation 호출하도록 수정 |
+| ✅ | Hallucination (KB에 없는 식당 추천) | search_restaurants 결과 외 식당 언급 금지 프롬프트 강화 |
 | 🟡 | Web Search 강남 날씨 쿼리 | "서울 강남구 현재 날씨" 또는 "Gangnam Seoul weather" 쿼리 사용 권장 |
 | 🟡 | Gateway 보안 | 현재 `authorizer-type: NONE`. 프로덕션 전환 시 `AWS_IAM`으로 변경 필요 |
 | 🟡 | `<thinking>` 태그 노출 | Runtime 응답에 추론 과정 포함됨. Lambda 및 app.py에서 필터링 처리 중 |
