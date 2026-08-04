@@ -28,6 +28,41 @@ from tools import search_restaurants, get_menu
 app = BedrockAgentCoreApp()
 log = app.logger
 
+# ── MCP 클라이언트 싱글턴 (앱 시작 시 한 번만 초기화) ──
+_mcp_local: MCPClient | None = None
+_mcp_web: MCPClient | None = None
+_extra_tools: list = []
+_tools_initialized = False
+
+
+def _init_tools():
+    """MCP 클라이언트 초기화 (최초 1회)"""
+    global _mcp_local, _mcp_web, _extra_tools, _tools_initialized
+    if _tools_initialized:
+        return
+
+    # MCP stdio (예약/비용)
+    try:
+        _mcp_local = MCPClient(lambda: stdio_client(server=MCP_SERVER_PARAMS))
+        _mcp_local.start()
+        _extra_tools.extend(_mcp_local.list_tools_sync())
+        log.info(f"MCP stdio 도구 로드 완료: {len(_extra_tools)}개")
+    except Exception as e:
+        log.warning(f"MCP stdio 초기화 실패: {e}")
+
+    # Web Search Gateway (MCP HTTP)
+    if GATEWAY_WEB_SEARCH_URL:
+        try:
+            _mcp_web = MCPClient(lambda: streamablehttp_client(url=GATEWAY_WEB_SEARCH_URL))
+            _mcp_web.start()
+            web_tools = _mcp_web.list_tools_sync()
+            _extra_tools.extend(web_tools)
+            log.info(f"Web Search Gateway 연결 성공: {[t.tool_name for t in web_tools]}")
+        except Exception as e:
+            log.warning(f"Web Search Gateway 연결 실패: {e}")
+
+    _tools_initialized = True
+
 # ── 설정 ──────────────────────────────────────────────
 MEMORY_ID = os.environ.get("MEMORY_ID", "")
 REGION = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
@@ -157,43 +192,21 @@ def _extract_fields(payload: dict) -> tuple[str, str, str]:
 async def invoke(payload, context):
     log.info("DiningConcierge 에이전트 호출 시작")
 
+    # MCP 클라이언트 초기화 (최초 1회)
+    _init_tools()
+
     prompt, session_id, actor_id = _extract_fields(payload)
 
     # Memory에서 취향 조회 → prompt에 주입
     memory_context = get_memory_context(actor_id, prompt)
 
-    # 이전 대화 컨텍스트 (payload에서 전달되는 경우)
+    # 이전 대화 컨텍스트
     conv_context = payload.get("conversation_context", "")
 
     augmented_prompt = memory_context + conv_context + prompt
 
-    # MCP 클라이언트들 초기화
-    mcp_clients = []
-    extra_tools = []
-
-    # 1. MCP stdio (예약/비용)
-    try:
-        mcp_local = MCPClient(lambda: stdio_client(server=MCP_SERVER_PARAMS))
-        mcp_local.start()
-        mcp_clients.append(mcp_local)
-        extra_tools.extend(mcp_local.list_tools_sync())
-        log.info(f"MCP stdio 도구 로드: {[t.tool_name for t in mcp_local.list_tools_sync()]}")
-    except Exception as e:
-        log.warning(f"MCP stdio 초기화 실패: {e}")
-
-    # 2. Web Search Gateway (MCP HTTP)
-    if GATEWAY_WEB_SEARCH_URL:
-        try:
-            mcp_web = MCPClient(lambda: streamablehttp_client(url=GATEWAY_WEB_SEARCH_URL))
-            mcp_web.start()
-            mcp_clients.append(mcp_web)
-            extra_tools.extend(mcp_web.list_tools_sync())
-            log.info("Web Search Gateway 연결 성공")
-        except Exception as e:
-            log.warning(f"Web Search Gateway 연결 실패: {e}")
-
-    # Agent 생성 및 실행
-    agent = create_agent(extra_tools)
+    # Agent 생성 (싱글턴 도구 사용)
+    agent = create_agent(_extra_tools)
     full_response = []
 
     try:
@@ -203,21 +216,15 @@ async def invoke(payload, context):
             cbs = event["event"].get("contentBlockStart")
             if cbs is not None and not cbs.get("start"):
                 continue
-            # 텍스트 수집 (Memory 저장용)
             cbd = event["event"].get("contentBlockDelta", {})
             text = cbd.get("delta", {}).get("text", "")
             if text:
                 full_response.append(text)
             yield event
     finally:
-        # MCP 클라이언트 종료
-        for mcp in mcp_clients:
-            try:
-                mcp.stop(None, None, None)
-            except Exception:
-                pass
+        pass  # MCP 클라이언트 종료 안 함 (싱글턴 유지)
 
-    # 대화를 Memory에 저장 (비동기 extraction 트리거)
+    # 대화를 Memory에 저장
     if full_response:
         response_text = "".join(full_response)
         save_to_memory(actor_id, session_id, prompt, response_text)
