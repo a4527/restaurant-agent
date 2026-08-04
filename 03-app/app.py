@@ -159,7 +159,7 @@ def save_conversation_to_memory(actor_id: str, user_text: str, assistant_text: s
     from datetime import datetime, timezone
     client = boto3.client("bedrock-agentcore", region_name=REGION)
 
-    # 유사한 내용이 이미 있는지 확인 (score >= 0.85이면 중복으로 간주)
+    # 유사한 내용이 이미 있는지 확인 (score >= 0.60이면 중복으로 간주)
     try:
         for ns in [f"/users/{actor_id}/preferences", f"/users/{actor_id}/facts"]:
             resp = client.retrieve_memory_records(
@@ -168,7 +168,7 @@ def save_conversation_to_memory(actor_id: str, user_text: str, assistant_text: s
                 searchCriteria={"searchQuery": user_text, "topK": 3}
             )
             for r in resp.get("memoryRecordSummaries", []):
-                if r.get("score", 0) >= 0.85:
+                if r.get("score", 0) >= 0.60:
                     print(f"[Memory] 중복 감지 (score={r['score']:.2f}), 저장 스킵")
                     return None
     except Exception:

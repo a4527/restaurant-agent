@@ -163,7 +163,7 @@ if __name__ == "__main__":
     print(f"케이스별 점수: {[f'{s:.2f}' for s in all_scores]}")
     print(f"{'=' * 60}")
 
-    THRESHOLD = 0.7
+    THRESHOLD = 0.8
     if avg_score >= THRESHOLD:
         print(f"\n✅ PASS — 평균 점수 {avg_score:.4f} >= {THRESHOLD}")
         sys.exit(0)
