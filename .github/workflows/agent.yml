@@ -66,6 +66,14 @@ jobs:
           npm ci
           npm run build
 
+      - name: Patch platform to x86_64 for GitHub Actions runner
+        working-directory: 02-agent/agentcore/cdk
+        run: |
+          sed -i "s/aarch64-manylinux2014/x86_64-manylinux2014/g" node_modules/@aws/agentcore-cdk/dist/lib/packaging/python.js
+          sed -i "s/aarch64-manylinux_2_28/x86_64-manylinux_2_28/g" node_modules/@aws/agentcore-cdk/dist/lib/packaging/python.js
+          sed -i "s/aarch64-manylinux_2_34/x86_64-manylinux_2_34/g" node_modules/@aws/agentcore-cdk/dist/lib/packaging/python.js
+          sed -i "s/aarch64-manylinux2014/x86_64-manylinux2014/g" node_modules/@aws/agentcore-cdk/dist/lib/constants.js
+
       - name: CDK Bootstrap
         working-directory: 02-agent/agentcore/cdk
         run: |
