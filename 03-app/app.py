@@ -152,6 +152,45 @@ def search_memory(actor_id: str, query: str) -> list:
     return results
 
 
+def delete_conflicting_memories(actor_id: str, user_text: str) -> None:
+    """상반된 취향이 있으면 기존 항목 삭제 (예: '일식 싫어' 입력 시 '일식 좋아' 삭제)"""
+    if not MEMORY_ID:
+        return
+
+    NEGATION_PAIRS = [
+        (["싫어", "싫다", "별로", "안 좋아", "안좋아", "취소"], ["좋아", "선호", "즐겨", "자주"]),
+        (["못 먹", "못먹", "안 먹", "안먹", "알레르기"], []),  # 제거 없이 추가만
+    ]
+
+    # 부정 표현이 있는지 확인
+    has_negation = any(neg in user_text for neg, _ in NEGATION_PAIRS for neg in neg if neg)
+    if not has_negation:
+        return
+
+    try:
+        client = boto3.client("bedrock-agentcore", region_name=REGION)
+        for ns in [f"/users/{actor_id}/preferences", f"/users/{actor_id}/facts"]:
+            resp = client.retrieve_memory_records(
+                memoryId=MEMORY_ID,
+                namespace=ns,
+                searchCriteria={"searchQuery": user_text, "topK": 5}
+            )
+            for r in resp.get("memoryRecordSummaries", []):
+                score = r.get("score", 0)
+                rec_id = r.get("memoryRecordId", "")
+                if score >= 0.60 and rec_id:
+                    try:
+                        client.delete_memory_record(
+                            memoryId=MEMORY_ID,
+                            memoryRecordId=rec_id
+                        )
+                        print(f"[Memory] 상반된 취향 삭제: {rec_id} (score={score:.2f})")
+                    except Exception as e:
+                        print(f"[Memory] 삭제 실패: {e}")
+    except Exception as e:
+        print(f"[Memory] 상반된 취향 검색 실패: {e}")
+
+
 def save_conversation_to_memory(actor_id: str, user_text: str, assistant_text: str, session_id: str) -> str | None:
     """대화를 create_event로 Memory에 기록 → 자동 extraction으로 취향 추출
     유사한 내용이 이미 있으면 저장 스킵 (중복 방지)
@@ -159,7 +198,7 @@ def save_conversation_to_memory(actor_id: str, user_text: str, assistant_text: s
     from datetime import datetime, timezone
     client = boto3.client("bedrock-agentcore", region_name=REGION)
 
-    # 유사한 내용이 이미 있는지 확인 (score >= 0.60이면 중복으로 간주)
+    # 유사한 내용이 이미 있는지 확인 (score >= 0.50이면 중복으로 간주)
     try:
         for ns in [f"/users/{actor_id}/preferences", f"/users/{actor_id}/facts"]:
             resp = client.retrieve_memory_records(
@@ -168,7 +207,7 @@ def save_conversation_to_memory(actor_id: str, user_text: str, assistant_text: s
                 searchCriteria={"searchQuery": user_text, "topK": 3}
             )
             for r in resp.get("memoryRecordSummaries", []):
-                if r.get("score", 0) >= 0.60:
+                if r.get("score", 0) >= 0.50:
                     print(f"[Memory] 중복 감지 (score={r['score']:.2f}), 저장 스킵")
                     return None
     except Exception:
@@ -299,7 +338,7 @@ def invoke_runtime(prompt: str, session_id: str, actor_id: str) -> tuple[str, li
         if not prefs:
             print(f"[Memory] ⚠️ 취향 0건 — prompt 주입 없음")
         else:
-            memory_context = "[사용자 취향 정보 (Memory에서 조회됨)]\n" + "\n".join(f"- {p}" for p in prefs) + "\n\n위 취향을 반드시 반영하여 답변하세요.\n\n"
+            memory_context = "[사용자 이전 취향 (참고용, 현재 요청을 우선시하세요)]\n" + "\n".join(f"- {p}" for p in prefs) + "\n\n"
             print(f"[Memory] ✅ {len(prefs)}개 취향 주입")
     except Exception as e:
         print(f"[Memory] ❌ 오류: {type(e).__name__}: {e}")
@@ -712,7 +751,8 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 강남 식당 추천
         "tool_calls": tool_calls,
     })
 
-    # 대화를 Memory에 기록 → 자동 extraction으로 취향 추출
+    # 상반된 취향 삭제 후 Memory에 기록
+    delete_conflicting_memories(st.session_state.actor_id, prompt)
     event_id = save_conversation_to_memory(
         st.session_state.actor_id,
         prompt,
