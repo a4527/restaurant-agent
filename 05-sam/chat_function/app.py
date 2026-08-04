@@ -4,10 +4,7 @@ import re
 import boto3
 
 
-RUNTIME_ARN = os.environ.get(
-    "RUNTIME_ARN",
-    "arn:aws:bedrock-agentcore:us-west-2:678498164624:runtime/DiningConcierge_DiningConcierge-aLEpSdHOiw",
-)
+RUNTIME_ARN = os.environ.get("RUNTIME_ARN", "")
 REGION = os.environ.get("AWS_REGION", "us-west-2")
 
 agentcore_client = boto3.client("bedrock-agentcore", region_name=REGION)
@@ -30,6 +27,9 @@ def lambda_handler(event, context):
     # CORS preflight
     if event.get("httpMethod", "") == "OPTIONS":
         return build_response(200, {"message": "OK"})
+
+    if not RUNTIME_ARN:
+        return build_response(500, {"error": "RUNTIME_ARN 환경변수가 설정되지 않았습니다."})
 
     try:
         body = json.loads(event.get("body", "{}"))

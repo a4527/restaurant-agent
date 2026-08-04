@@ -33,6 +33,26 @@ jobs:
       - name: Install SAM CLI
         uses: aws-actions/setup-sam@v2
 
+      - name: Read RUNTIME_ARN from SSM
+        id: ssm
+        run: |
+          RUNTIME_ARN=$(aws ssm get-parameter \
+            --name "/dining/RUNTIME_ARN" \
+            --query "Parameter.Value" \
+            --output text \
+            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+
+          if [ -z "$RUNTIME_ARN" ]; then
+            # SSM에 없으면 현재 배포된 Runtime에서 직접 조회
+            RUNTIME_ARN=$(aws bedrock-agentcore-control list-agent-runtimes \
+              --region ${{ env.AWS_REGION }} \
+              --query "agentRuntimes[?status=='READY'].agentRuntimeArn | [0]" \
+              --output text 2>/dev/null || echo "")
+          fi
+
+          echo "runtime_arn=$RUNTIME_ARN" >> $GITHUB_OUTPUT
+          echo "RUNTIME_ARN=$RUNTIME_ARN"
+
       - name: SAM Build
         working-directory: 05-sam
         run: sam build
@@ -46,4 +66,21 @@ jobs:
             --no-fail-on-empty-changeset \
             --capabilities CAPABILITY_IAM \
             --resolve-s3 \
-            --region ${{ env.AWS_REGION }}
+            --region ${{ env.AWS_REGION }} \
+            --parameter-overrides RuntimeArn="${{ steps.ssm.outputs.runtime_arn }}"
+
+      - name: Save API URL to SSM
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.SAM_STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='ChatApiUrl'].OutputValue" \
+            --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+          if [ -n "$API_URL" ]; then
+            aws ssm put-parameter \
+              --name "/dining/API_URL" \
+              --value "$API_URL" \
+              --type String \
+              --overwrite \
+              --region ${{ env.AWS_REGION }}
+            echo "✅ SSM /dining/API_URL 저장: $API_URL"
+          fi

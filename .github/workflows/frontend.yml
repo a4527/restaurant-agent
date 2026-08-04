@@ -32,11 +32,23 @@ jobs:
       - name: Get API URL
         id: api-url
         run: |
-          API_URL=$(aws cloudformation describe-stacks \
-            --stack-name dining-sam-api \
-            --query "Stacks[0].Outputs[?OutputKey=='ChatApiUrl'].OutputValue" \
-            --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+          # SSM에서 먼저 조회
+          API_URL=$(aws ssm get-parameter \
+            --name "/dining/API_URL" \
+            --query "Parameter.Value" \
+            --output text \
+            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+
+          # SSM에 없으면 CloudFormation에서 조회
+          if [ -z "$API_URL" ]; then
+            API_URL=$(aws cloudformation describe-stacks \
+              --stack-name dining-sam-api \
+              --query "Stacks[0].Outputs[?OutputKey=='ChatApiUrl'].OutputValue" \
+              --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+          fi
+
           echo "url=$API_URL" >> $GITHUB_OUTPUT
+          echo "API_URL=$API_URL"
 
       - name: Install & Build
         working-directory: 06-frontend

@@ -24,7 +24,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install strands-agents strands-agents-evals boto3
+          pip install strands-agents strands-agents-evals boto3 mcp
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -42,6 +42,10 @@ jobs:
     name: AgentCore Deploy
     needs: evaluate
     runs-on: ubuntu-latest
+    outputs:
+      runtime_arn: ${{ steps.extract.outputs.runtime_arn }}
+      memory_id: ${{ steps.extract.outputs.memory_id }}
+      gateway_url: ${{ steps.extract.outputs.gateway_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -78,3 +82,69 @@ jobs:
       - name: Deploy to AgentCore Runtime
         working-directory: 02-agent
         run: npx @aws/agentcore deploy --yes --verbose
+
+      - name: Extract ARN/ID/URL and save to SSM
+        id: extract
+        working-directory: 02-agent
+        run: |
+          # RUNTIME_ARN 추출
+          RUNTIME_ARN=$(npx @aws/agentcore status --json 2>/dev/null | \
+            python3 -c "import sys,json; d=json.load(sys.stdin); print(d['runtimes'][0]['arn'])" 2>/dev/null || \
+            npx @aws/agentcore status 2>/dev/null | grep -oP 'arn:aws:bedrock-agentcore:[^\s)]+' | head -1)
+
+          # MEMORY_ID 추출
+          MEMORY_ID=$(aws bedrock-agentcore-control list-memories \
+            --region ${{ env.AWS_REGION }} \
+            --query "memories[0].id" --output text 2>/dev/null || echo "")
+
+          # GATEWAY_URL 추출
+          GATEWAY_ID=$(npx @aws/agentcore status 2>/dev/null | \
+            grep -oP 'dining-web-search[^\s]+' | head -1 || echo "")
+          if [ -n "$GATEWAY_ID" ]; then
+            GATEWAY_URL="https://${GATEWAY_ID}.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
+          else
+            GATEWAY_URL=$(aws bedrock-agentcore-control list-gateways \
+              --region us-east-1 \
+              --query "items[?name=='dining-web-search'].endpoint" \
+              --output text 2>/dev/null || echo "")
+          fi
+
+          echo "RUNTIME_ARN=$RUNTIME_ARN"
+          echo "MEMORY_ID=$MEMORY_ID"
+          echo "GATEWAY_URL=$GATEWAY_URL"
+
+          # GitHub Actions output
+          echo "runtime_arn=$RUNTIME_ARN" >> $GITHUB_OUTPUT
+          echo "memory_id=$MEMORY_ID" >> $GITHUB_OUTPUT
+          echo "gateway_url=$GATEWAY_URL" >> $GITHUB_OUTPUT
+
+          # SSM Parameter Store에 저장 (다른 워크플로우에서 읽기 위해)
+          if [ -n "$RUNTIME_ARN" ]; then
+            aws ssm put-parameter \
+              --name "/dining/RUNTIME_ARN" \
+              --value "$RUNTIME_ARN" \
+              --type String \
+              --overwrite \
+              --region ${{ env.AWS_REGION }}
+            echo "✅ SSM /dining/RUNTIME_ARN 저장 완료"
+          fi
+
+          if [ -n "$MEMORY_ID" ]; then
+            aws ssm put-parameter \
+              --name "/dining/MEMORY_ID" \
+              --value "$MEMORY_ID" \
+              --type String \
+              --overwrite \
+              --region ${{ env.AWS_REGION }}
+            echo "✅ SSM /dining/MEMORY_ID 저장 완료"
+          fi
+
+          if [ -n "$GATEWAY_URL" ]; then
+            aws ssm put-parameter \
+              --name "/dining/GATEWAY_URL" \
+              --value "$GATEWAY_URL" \
+              --type String \
+              --overwrite \
+              --region ${{ env.AWS_REGION }}
+            echo "✅ SSM /dining/GATEWAY_URL 저장 완료"
+          fi

@@ -31,10 +31,7 @@ log = app.logger
 # ── 설정 ──────────────────────────────────────────────
 MEMORY_ID = os.environ.get("MEMORY_ID", "")
 REGION = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
-GATEWAY_WEB_SEARCH_URL = os.environ.get(
-    "GATEWAY_WEB_SEARCH_URL",
-    ""
-)
+GATEWAY_WEB_SEARCH_URL = os.environ.get("GATEWAY_WEB_SEARCH_URL", "")
 
 # ── MCP 서버 파라미터 ─────────────────────────────────
 MCP_SERVER_PARAMS = StdioServerParameters(

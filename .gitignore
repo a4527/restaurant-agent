@@ -4,6 +4,10 @@ __pycache__/
 venv/
 .venv/
 
+# 환경변수 (민감 정보 — 절대 커밋하지 않음)
+.env
+03-app/.env
+
 # Node
 node_modules/
 06-frontend/build/

@@ -120,46 +120,57 @@ if [ "$RUN_AGENT" = true ]; then
   bash deploy.sh
   cd "$SCRIPT_DIR"
 
-  # RUNTIME_ARN을 03-app/app.py에 자동 반영
+  # RUNTIME_ARN 추출
   RUNTIME_ARN=$(npx @aws/agentcore status --json 2>/dev/null | \
     python3 -c "import sys,json; data=json.load(sys.stdin); print(data['runtimes'][0]['arn'])" 2>/dev/null || echo "")
-  if [ -n "$RUNTIME_ARN" ]; then
-    sed -i "s|RUNTIME_ARN = \".*\"|RUNTIME_ARN = \"$RUNTIME_ARN\"|" 03-app/app.py
-    echo "✅ 03-app/app.py RUNTIME_ARN 업데이트: $RUNTIME_ARN"
-  else
-    # fallback: agentcore status 텍스트 파싱
+  if [ -z "$RUNTIME_ARN" ]; then
     RUNTIME_ARN=$(npx @aws/agentcore status 2>/dev/null | grep -oP 'arn:aws:bedrock-agentcore:[^\s)]+' | head -1)
-    if [ -n "$RUNTIME_ARN" ]; then
-      sed -i "s|RUNTIME_ARN = \".*\"|RUNTIME_ARN = \"$RUNTIME_ARN\"|" 03-app/app.py
-      echo "✅ 03-app/app.py RUNTIME_ARN 업데이트: $RUNTIME_ARN"
-    else
-      echo "⚠️  RUNTIME_ARN 자동 추출 실패. 수동 확인 필요: npx @aws/agentcore status"
-    fi
   fi
 
-  # Memory ID를 03-app/app.py에 자동 반영
-  MEMORY_ID=$(npx @aws/agentcore status 2>/dev/null | grep -oP 'DiningConcierge_dining_memory[^\s]+' | head -1)
-  if [ -n "$MEMORY_ID" ]; then
-    sed -i "s|MEMORY_ID = \".*\"|MEMORY_ID = \"$MEMORY_ID\"|" 03-app/app.py
-    echo "✅ 03-app/app.py MEMORY_ID 업데이트: $MEMORY_ID"
+  # MEMORY_ID 추출
+  MEMORY_ID=$(aws bedrock-agentcore-control list-memories \
+    --region "$AWS_REGION" \
+    --query "memories[0].id" --output text 2>/dev/null || echo "")
+  if [ -z "$MEMORY_ID" ]; then
+    MEMORY_ID=$(npx @aws/agentcore status 2>/dev/null | grep -oP '[A-Za-z0-9_]+-[A-Za-z0-9]+' | grep -i memory | head -1 || echo "")
   fi
 
-  # Gateway URL을 03-app/app.py와 02-agent/main.py에 자동 반영
-  GATEWAY_ID=$(npx @aws/agentcore status 2>/dev/null | grep -oP 'dining-web-search[^\s]+' | head -1)
+  # GATEWAY_URL 추출
+  GATEWAY_ID=$(npx @aws/agentcore status 2>/dev/null | grep -oP 'dining-web-search[^\s]+' | head -1 || echo "")
   if [ -n "$GATEWAY_ID" ]; then
     GATEWAY_URL="https://${GATEWAY_ID}.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
-    sed -i "s|GATEWAY_WEB_SEARCH_URL = \".*\"|GATEWAY_WEB_SEARCH_URL = \"$GATEWAY_URL\"|" 03-app/app.py
-    echo "✅ 03-app/app.py GATEWAY_WEB_SEARCH_URL 업데이트: $GATEWAY_URL"
-    # main.py의 환경변수 기본값도 업데이트
-    sed -i "s|\"GATEWAY_WEB_SEARCH_URL\", \".*\"|\"GATEWAY_WEB_SEARCH_URL\", \"$GATEWAY_URL\"|" 02-agent/app/DiningConcierge/main.py
-    echo "✅ 02-agent/main.py GATEWAY_WEB_SEARCH_URL 업데이트: $GATEWAY_URL"
+  else
+    GATEWAY_URL=""
   fi
 
-  # Memory ID를 02-agent/main.py에도 반영
-  if [ -n "$MEMORY_ID" ]; then
-    sed -i "s|\"MEMORY_ID\", \".*\"|\"MEMORY_ID\", \"$MEMORY_ID\"|" 02-agent/app/DiningConcierge/main.py
-    echo "✅ 02-agent/main.py MEMORY_ID 업데이트: $MEMORY_ID"
+  # SSM Parameter Store에 저장 (CI/CD에서 자동으로 읽음)
+  if [ -n "$RUNTIME_ARN" ]; then
+    aws ssm put-parameter --name "/dining/RUNTIME_ARN" --value "$RUNTIME_ARN" \
+      --type String --overwrite --region "$AWS_REGION" 2>/dev/null
+    echo "✅ SSM /dining/RUNTIME_ARN: $RUNTIME_ARN"
+  else
+    echo "⚠️  RUNTIME_ARN 추출 실패"
   fi
+  if [ -n "$MEMORY_ID" ]; then
+    aws ssm put-parameter --name "/dining/MEMORY_ID" --value "$MEMORY_ID" \
+      --type String --overwrite --region "$AWS_REGION" 2>/dev/null
+    echo "✅ SSM /dining/MEMORY_ID: $MEMORY_ID"
+  fi
+  if [ -n "$GATEWAY_URL" ]; then
+    aws ssm put-parameter --name "/dining/GATEWAY_URL" --value "$GATEWAY_URL" \
+      --type String --overwrite --region "$AWS_REGION" 2>/dev/null
+    echo "✅ SSM /dining/GATEWAY_URL: $GATEWAY_URL"
+  fi
+
+  # 03-app/.env 생성 (로컬 앱용)
+  cat > 03-app/.env <<EOF
+# DiningConcierge 로컬 앱 환경변수 (setup.sh에 의해 자동 생성됨)
+RUNTIME_ARN=${RUNTIME_ARN}
+MEMORY_ID=${MEMORY_ID}
+GATEWAY_WEB_SEARCH_URL=${GATEWAY_URL}
+AWS_REGION=${AWS_REGION:-us-west-2}
+EOF
+  echo "✅ 03-app/.env 생성 완료"
 
   echo ""
 fi
@@ -187,24 +198,32 @@ if [ "$RUN_SAM" = true ]; then
   echo "============================================================"
   cd 05-sam
 
-  # RUNTIME_ARN 자동 반영
-  RUNTIME_ARN=$(npx @aws/agentcore status 2>/dev/null | grep -oP 'arn:aws:bedrock-agentcore:[^\s)]+' | head -1)
-  if [ -n "$RUNTIME_ARN" ]; then
-    echo "RUNTIME_ARN: $RUNTIME_ARN → template.yaml 업데이트"
-    sed -i "s|RUNTIME_ARN: .*|RUNTIME_ARN: $RUNTIME_ARN|" template.yaml
+  # RUNTIME_ARN을 SSM에서 읽기 (없으면 직접 조회)
+  RUNTIME_ARN=$(aws ssm get-parameter --name "/dining/RUNTIME_ARN" \
+    --query "Parameter.Value" --output text --region "$AWS_REGION" 2>/dev/null || echo "")
+  if [ -z "$RUNTIME_ARN" ]; then
+    RUNTIME_ARN=$(aws bedrock-agentcore-control list-agent-runtimes \
+      --region "$AWS_REGION" \
+      --query "agentRuntimes[?status=='READY'].agentRuntimeArn | [0]" \
+      --output text 2>/dev/null || echo "")
   fi
 
   sam build
-  sam deploy --no-confirm-changeset --no-fail-on-empty-changeset
+  sam deploy \
+    --no-confirm-changeset \
+    --no-fail-on-empty-changeset \
+    --parameter-overrides RuntimeArn="$RUNTIME_ARN"
 
-  # API URL 추출
+  # API URL 추출 + SSM 저장
   API_URL=$(aws cloudformation describe-stacks \
     --stack-name dining-sam-api \
     --query "Stacks[0].Outputs[?OutputKey=='ChatApiUrl'].OutputValue" \
-    --output text --region $REGION 2>/dev/null || echo "")
+    --output text --region "${AWS_REGION:-us-west-2}" 2>/dev/null || echo "")
 
   if [ -n "$API_URL" ]; then
     echo "$API_URL" > api-url.txt
+    aws ssm put-parameter --name "/dining/API_URL" --value "$API_URL" \
+      --type String --overwrite --region "${AWS_REGION:-us-west-2}" 2>/dev/null
     echo "✅ SAM API 배포 완료: $API_URL"
   else
     echo "✅ SAM 배포 완료 (URL은 CloudFormation 출력에서 확인)"

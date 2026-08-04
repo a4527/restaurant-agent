@@ -2,6 +2,12 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Dining SAM API - Proxy to AgentCore Runtime
 
+Parameters:
+  RuntimeArn:
+    Type: String
+    Description: AgentCore Runtime ARN
+    Default: ""
+
 Globals:
   Function:
     Timeout: 90
@@ -18,7 +24,7 @@ Resources:
         - x86_64
       Environment:
         Variables:
-          RUNTIME_ARN: arn:aws:bedrock-agentcore:us-west-2:678498164624:runtime/DiningConcierge_DiningConcierge-aLEpSdHOiw
+          RUNTIME_ARN: !Ref RuntimeArn
       Policies:
         - Statement:
             - Effect: Allow

@@ -1048,10 +1048,17 @@ REACT_APP_API_URL → npm run build → 프론트엔드에 번들
 | `02-agent/pyproject.toml` | mcp>=1.24.0 의존성 추가 |
 | `02-agent/agentcore.json` | Web Search Gateway (dining-web-search) 추가 |
 | `04-pipeline/eval_gate.py` | MCP 케이스(예약/비용) 추가 + MCP 클라이언트 연결 |
-| `05-sam/chat_function/app.py` | session_id, actor_id, conversation_context 전달 + tool_calls 반환 |
+| `05-sam/chat_function/app.py` | session_id, actor_id, conversation_context 전달 + tool_calls 반환, 하드코딩 제거 |
+| `05-sam/template.yaml` | RUNTIME_ARN을 Parameter로 변경 (하드코딩 제거) |
 | `06-frontend/src/App.js` | 다중 세션(localStorage), 도구 호출 로그, Memory 현황, 식당 카드 UI 추가 |
-| `03-app/app.py` | memoryRecordSummaries 키 수정, 다중 세션, 중복 저장 방지, 대화 컨텍스트 주입 |
-| `setup.sh` | Gateway/Memory ID를 main.py에도 자동 반영하도록 수정 |
+| `03-app/app.py` | .env 기반으로 변경, memoryRecordSummaries 키 수정, 다중 세션, 중복 저장 방지, 대화 컨텍스트 주입 |
+| `03-app/.env.example` | 환경변수 템플릿 파일 신규 생성 |
+| `03-app/requirements.txt` | python-dotenv 추가 |
+| `.github/workflows/agent.yml` | 배포 후 RUNTIME_ARN/MEMORY_ID/GATEWAY_URL을 SSM에 저장 |
+| `.github/workflows/api.yml` | SSM에서 RUNTIME_ARN 읽어서 SAM 배포 시 주입, API_URL SSM 저장 |
+| `.github/workflows/frontend.yml` | SSM에서 API_URL 읽어서 빌드 시 주입 |
+| `setup.sh` | sed 방식 제거 → SSM 저장 + .env 생성으로 교체 |
+| `.gitignore` | .env 추가 |
 | `TROUBLESHOOTING.md` | Memory API 응답 키 변경 이슈 (memoryRecords→memoryRecordSummaries) 추가 |
 
 ### 다음 단계

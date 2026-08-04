@@ -13,12 +13,16 @@ import re
 import json
 import streamlit as st
 import boto3
+from dotenv import load_dotenv
+
+# .env 파일 로드 (없으면 환경변수에서 읽음)
+load_dotenv()
 
 # ── 설정 ──────────────────────────────────────────────
-RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-west-2:678498164624:runtime/DiningConcierge_DiningConcierge-aLEpSdHOiw"
-MEMORY_ID = "DiningConcierge_memory_v2-LQr1ybFdoo"
-REGION = "us-west-2"
-GATEWAY_WEB_SEARCH_URL = "https://dining-web-search-gateway-fiahbr5mdx.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
+RUNTIME_ARN = os.environ.get("RUNTIME_ARN", "")
+MEMORY_ID = os.environ.get("MEMORY_ID", "")
+REGION = os.environ.get("AWS_REGION", "us-west-2")
+GATEWAY_WEB_SEARCH_URL = os.environ.get("GATEWAY_WEB_SEARCH_URL", "")
 
 # ── 도구 아이콘 매핑 ──────────────────────────────────
 TOOL_ICONS = {

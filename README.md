@@ -169,16 +169,37 @@ cd restaurant-project
 |------|------|-----------|
 | STEP 0 | `--infra` | CloudFormation 배포 — S3 버킷 2개 + IAM 역할 2개 |
 | STEP 1 | `--kb` | OpenSearch 컬렉션 + 벡터 인덱스(1024dim) + KB 생성 + 데이터 동기화 |
-| STEP 2 | `--agent` | Memory + Gateway 생성 + AgentCore CDK 배포 + ARN/ID 자동 반영 |
+| STEP 2 | `--agent` | Memory + Gateway 생성 + AgentCore CDK 배포 + ARN/ID를 SSM에 자동 저장 + `.env` 생성 |
 | STEP 3 | `--app` | Streamlit venv 구성 (로컬 테스트 전용, 선택) |
-| STEP 4 | `--sam` | SAM build + deploy (RUNTIME_ARN 자동 주입) |
+| STEP 4 | `--sam` | SAM build + deploy (SSM에서 RUNTIME_ARN 자동 읽어서 주입) |
 | STEP 5 | `--frontend` | npm build + S3 업로드 + OAC + CloudFront 생성 |
 | STEP 6 | `--pipeline` | GitHub Actions 설정 안내 |
 
 - `./setup.sh` (인자 없음): STEP 0~3만 실행 (로컬 개발 환경)
 - `./setup.sh --all`: STEP 0~6 전체 실행 (프로덕션 배포)
 
-> **수동 설정 불필요**: 모든 ID, ARN, URL이 단계 간 자동 반영됩니다.
+> **수동 설정 불필요**: 모든 ID, ARN, URL이 단계 간 자동 반영됩니다.  
+> **코드 수정 없음**: ID/ARN은 코드가 아닌 SSM Parameter Store와 `.env`로 관리됩니다.
+
+### 환경변수 관리 구조
+
+모든 ID/ARN/URL은 코드에 하드코딩되지 않습니다:
+
+```
+[setup.sh --agent] → 배포 완료
+         │
+         ├─ SSM /dining/RUNTIME_ARN  ← api.yml이 읽어서 Lambda에 주입
+         ├─ SSM /dining/MEMORY_ID    ← (참조용)
+         ├─ SSM /dining/GATEWAY_URL  ← (참조용)
+         └─ 03-app/.env              ← 로컬 앱이 읽음
+
+[api.yml] → SAM 배포
+         │
+         └─ SSM /dining/API_URL      ← frontend.yml이 읽어서 React 빌드에 주입
+
+[로컬 앱] → 03-app/.env 파일 읽음
+         (cp .env.example .env 후 값 입력, 또는 setup.sh 자동 생성)
+```
 
 ---
 
