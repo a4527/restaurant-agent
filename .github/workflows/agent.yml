@@ -60,6 +60,9 @@ jobs:
       - name: Install AgentCore CLI
         run: npm install -g @aws/agentcore
 
+      - name: Install uv (Python package manager)
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh && echo "$HOME/.local/bin" >> $GITHUB_PATH
+
       - name: Install CDK dependencies
         working-directory: 02-agent/agentcore/cdk
         run: |
