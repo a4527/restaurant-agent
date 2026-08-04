@@ -405,8 +405,9 @@ def invoke_runtime(prompt: str, session_id: str, actor_id: str) -> tuple[str, li
         if "get_menu" in body:
             tool_calls.append({"order": len(tool_calls)+1, "name": "get_menu", "input": {}})
 
-    # <thinking> 태그 제거
+    # <thinking> 태그 제거 (완전한 태그 + 불완전하게 잘린 경우 모두)
     result = re.sub(r"<thinking>.*?</thinking>\n?", "", result, flags=re.DOTALL)
+    result = re.sub(r"<thinking>.*$", "", result, flags=re.DOTALL)
 
     return result.strip() or "응답 없음", tool_calls
 

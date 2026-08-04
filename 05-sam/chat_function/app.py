@@ -158,6 +158,7 @@ def lambda_handler(event, context):
 
         reply = "".join(reply_parts)
         reply = re.sub(r"<thinking>.*?</thinking>\n?", "", reply, flags=re.DOTALL)
+        reply = re.sub(r"<thinking>.*$", "", reply, flags=re.DOTALL)
 
         # fallback 도구 감지
         if not tool_calls:
