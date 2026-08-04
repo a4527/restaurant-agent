@@ -5,6 +5,7 @@ import boto3
 
 
 RUNTIME_ARN = os.environ.get("RUNTIME_ARN", "")
+MEMORY_ID = os.environ.get("MEMORY_ID", "")
 REGION = os.environ.get("AWS_REGION", "us-west-2")
 
 agentcore_client = boto3.client("bedrock-agentcore", region_name=REGION)
@@ -16,18 +17,72 @@ def build_response(status_code, body):
         "headers": {
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, Authorization",
         },
         "body": json.dumps(body, ensure_ascii=False),
     }
 
 
+def get_memory_context(actor_id: str, query: str) -> str:
+    """Memory에서 취향 조회 → prompt 주입용 컨텍스트 반환"""
+    if not MEMORY_ID:
+        return ""
+    try:
+        prefs = []
+        for ns in [f"/users/{actor_id}/preferences", f"/users/{actor_id}/facts"]:
+            resp = agentcore_client.retrieve_memory_records(
+                memoryId=MEMORY_ID,
+                namespace=ns,
+                searchCriteria={"searchQuery": query, "topK": 5}
+            )
+            for r in resp.get("memoryRecordSummaries", []):
+                text = r.get("content", {}).get("text", "")
+                if text and text not in prefs:
+                    prefs.append(text)
+        if prefs:
+            return "[사용자 취향 정보]\n" + "\n".join(f"- {p}" for p in prefs) + "\n\n위 취향을 반드시 반영하여 답변하세요.\n\n"
+    except Exception as e:
+        print(f"Memory 조회 오류: {e}")
+    return ""
+
+
+def get_memory_status(actor_id: str) -> dict:
+    """Memory 현황 조회 (취향 + 사실)"""
+    if not MEMORY_ID:
+        return {"preferences": [], "facts": [], "error": "MEMORY_ID not configured"}
+    result = {"preferences": [], "facts": []}
+    try:
+        for ns_type in ["preferences", "facts"]:
+            resp = agentcore_client.retrieve_memory_records(
+                memoryId=MEMORY_ID,
+                namespace=f"/users/{actor_id}/{ns_type}",
+                searchCriteria={"searchQuery": "취향 선호 사실", "topK": 20}
+            )
+            for r in resp.get("memoryRecordSummaries", []):
+                text = r.get("content", {}).get("text", "")
+                if text:
+                    result[ns_type].append(text)
+    except Exception as e:
+        result["error"] = str(e)
+    return result
+
+
 def lambda_handler(event, context):
+    http_method = event.get("httpMethod", "")
+    path = event.get("path", "")
+
     # CORS preflight
-    if event.get("httpMethod", "") == "OPTIONS":
+    if http_method == "OPTIONS":
         return build_response(200, {"message": "OK"})
 
+    # ── GET /memory?actor_id=xxx ──────────────────────
+    if http_method == "GET" and path == "/memory":
+        params = event.get("queryStringParameters") or {}
+        actor_id = params.get("actor_id", "anonymous")
+        return build_response(200, get_memory_status(actor_id))
+
+    # ── POST /chat ────────────────────────────────────
     if not RUNTIME_ARN:
         return build_response(500, {"error": "RUNTIME_ARN 환경변수가 설정되지 않았습니다."})
 
@@ -38,16 +93,18 @@ def lambda_handler(event, context):
         actor_id = body.get("actor_id", "anonymous")
         conversation_context = body.get("conversation_context", "")
 
-        # runtimeSessionId 최소 33자 요구사항 충족
+        # runtimeSessionId 최소 33자 요구사항
         if len(session_id) < 33:
             session_id = session_id + "-" + "0" * (33 - len(session_id) - 1)
 
         if not message:
             return build_response(400, {"error": "message field is required"})
 
-        # AgentCore Runtime 호출
+        # Memory에서 취향 조회 → prompt에 주입
+        memory_context = get_memory_context(actor_id, message)
+
         payload = {
-            "prompt": message,
+            "prompt": memory_context + conversation_context + message,
             "session_id": session_id,
             "actor_id": actor_id,
         }
@@ -64,7 +121,6 @@ def lambda_handler(event, context):
 
         stream_data = response["response"].read().decode("utf-8")
 
-        # SSE 파싱 — 텍스트 + 도구 호출
         reply_parts = []
         tool_calls = []
         tool_counter = 0
@@ -76,12 +132,10 @@ def lambda_handler(event, context):
                 event_data = json.loads(line[6:])
                 evt = event_data.get("event", {})
 
-                # 텍스트
                 text = evt.get("contentBlockDelta", {}).get("delta", {}).get("text", "")
                 if text:
                     reply_parts.append(text)
 
-                # 도구 호출
                 tool_use = evt.get("contentBlockStart", {}).get("start", {}).get("toolUse")
                 if tool_use:
                     tool_counter += 1
@@ -91,7 +145,6 @@ def lambda_handler(event, context):
                         "input": {},
                     })
 
-                # 도구 입력 파라미터
                 tool_delta = evt.get("contentBlockDelta", {}).get("delta", {}).get("toolUse", {})
                 if tool_delta and tool_calls:
                     try:
@@ -104,22 +157,13 @@ def lambda_handler(event, context):
                 pass
 
         reply = "".join(reply_parts)
-
-        # <thinking> 태그 제거
         reply = re.sub(r"<thinking>.*?</thinking>\n?", "", reply, flags=re.DOTALL)
 
-        # 응답 내용에서 도구 호출 키워드 감지 (fallback)
+        # fallback 도구 감지
         if not tool_calls:
-            if "search_restaurants" in stream_data:
-                tool_calls.append({"order": 1, "name": "search_restaurants", "input": {}})
-            if "get_menu" in stream_data:
-                tool_calls.append({"order": len(tool_calls)+1, "name": "get_menu", "input": {}})
-            if "check_reservation" in stream_data:
-                tool_calls.append({"order": len(tool_calls)+1, "name": "check_reservation", "input": {}})
-            if "create_reservation" in stream_data:
-                tool_calls.append({"order": len(tool_calls)+1, "name": "create_reservation", "input": {}})
-            if "estimate_cost" in stream_data:
-                tool_calls.append({"order": len(tool_calls)+1, "name": "estimate_cost", "input": {}})
+            for tool_name in ["search_restaurants", "get_menu", "check_reservation", "create_reservation", "estimate_cost"]:
+                if tool_name in stream_data:
+                    tool_calls.append({"order": len(tool_calls)+1, "name": tool_name, "input": {}})
 
         return build_response(200, {
             "reply": reply.strip() or "응답을 생성하지 못했습니다.",

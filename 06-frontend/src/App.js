@@ -105,7 +105,7 @@ function Sidebar({
   actorId, setActorId,
   currentSessionId, sessions, sessionLabel, setSessionLabel,
   onNewSession, onSwitchSession, onDeleteSession,
-  toolLogs, memories,
+  toolLogs, memories, fetchMemories,
 }) {
   return (
     <div style={{ padding: '16px', height: '100%', overflowY: 'auto', fontSize: '13px' }}>
@@ -170,7 +170,10 @@ function Sidebar({
 
       {/* Memory 현황 */}
       <div style={{ marginBottom: '16px' }}>
-        <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>🧠 Memory 현황</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <div style={{ fontWeight: 'bold' }}>🧠 Memory 현황</div>
+          <Button onClick={() => fetchMemories(actorId)} variant="icon" iconName="refresh" ariaLabel="Memory 새로고침" />
+        </div>
         {memories.conversations?.length > 0 && (
           <ExpandableSection headerText={`💬 대화 기록 (${Math.floor(memories.conversations.length / 2)}턴)`}>
             {memories.conversations.slice(-6).map((c, i) => (
@@ -244,6 +247,27 @@ function App() {
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef(null);
+
+  // Memory 현황 조회
+  const fetchMemories = useCallback(async (aid) => {
+    try {
+      const resp = await fetch(`${API_URL}/memory?actor_id=${encodeURIComponent(aid)}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setMemories(prev => ({
+          ...prev,
+          preferences: data.preferences || [],
+          facts: data.facts || [],
+        }));
+      }
+    } catch (e) {
+      console.log('Memory 조회 실패:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchMemories(actorId);
+  }, [actorId, fetchMemories]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -361,7 +385,7 @@ function App() {
       setSessions(updated);
       saveSessions(updated);
 
-      // Memory 현황 업데이트 (대화 기록)
+      // Memory 현황 업데이트 (대화 기록 + 새로고침)
       setMemories(prev => ({
         ...prev,
         conversations: [...(prev.conversations || []),
@@ -369,6 +393,8 @@ function App() {
           { role: 'ASSISTANT', text: reply },
         ],
       }));
+      // 채팅 후 Memory 새로고침 (비동기)
+      setTimeout(() => fetchMemories(actorId), 2000);
 
     } catch (error) {
       const errMsg = { role: 'assistant', content: `오류가 발생했습니다: ${error.message}` };
@@ -399,6 +425,7 @@ function App() {
           onDeleteSession={handleDeleteSession}
           toolLogs={toolLogs}
           memories={memories}
+          fetchMemories={fetchMemories}
         />
       }
       content={

@@ -7,6 +7,10 @@ Parameters:
     Type: String
     Description: AgentCore Runtime ARN
     Default: ""
+  MemoryId:
+    Type: String
+    Description: AgentCore Memory ID
+    Default: ""
 
 Globals:
   Function:
@@ -25,11 +29,13 @@ Resources:
       Environment:
         Variables:
           RUNTIME_ARN: !Ref RuntimeArn
+          MEMORY_ID: !Ref MemoryId
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - bedrock-agentcore:InvokeAgentRuntime
+                - bedrock-agentcore:RetrieveMemoryRecords
               Resource: "*"
       Events:
         ChatPost:
@@ -41,6 +47,16 @@ Resources:
           Type: Api
           Properties:
             Path: /chat
+            Method: options
+        MemoryGet:
+          Type: Api
+          Properties:
+            Path: /memory
+            Method: get
+        MemoryOptions:
+          Type: Api
+          Properties:
+            Path: /memory
             Method: options
 
 Outputs:
