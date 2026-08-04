@@ -42,7 +42,31 @@
   "credentials": [],
   "evaluators": [],
   "onlineEvalConfigs": [],
-  "agentCoreGateways": [],
+  "agentCoreGateways": [
+    {
+      "name": "dining-web-search",
+      "protocolType": "MCP",
+      "description": "Gateway for dining-web-search",
+      "targets": [
+        {
+          "name": "web-search",
+          "targetType": "connector",
+          "connectorId": "web-search",
+          "configurations": [
+            {
+              "name": "WebSearch",
+              "description": "",
+              "parameterValues": {},
+              "parameterOverrides": []
+            }
+          ]
+        }
+      ],
+      "authorizerType": "NONE",
+      "enableSemanticSearch": true,
+      "exceptionLevel": "NONE"
+    }
+  ],
   "policyEngines": [],
   "configBundles": [],
   "abTests": [],

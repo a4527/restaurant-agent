@@ -15,10 +15,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "02-agent", "ap
 from strands import Agent
 from strands.models.bedrock import BedrockModel
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
+from strands.tools.mcp import MCPClient
+from mcp import StdioServerParameters
+from mcp.client.stdio import stdio_client
 from strands_evals import Case, Experiment
 from strands_evals.evaluators import ToolCalled, Contains
 
 from tools import search_restaurants, get_menu
+
+# MCP 서버 파라미터
+MCP_SERVER_PARAMS = StdioServerParameters(
+    command=sys.executable,
+    args=[os.path.join(os.path.dirname(__file__), "..", "02-agent", "app", "DiningConcierge", "mcp_server.py")],
+)
 
 # ── 시스템 프롬프트 ─────────────────────────────────
 SYSTEM_PROMPT = """당신은 강남 지역 식당 추천 전문 도우미 "다이닝 컨시어지"입니다.
@@ -37,31 +46,35 @@ SYSTEM_PROMPT = """당신은 강남 지역 식당 추천 전문 도우미 "다�
 """
 
 
-def create_agent() -> Agent:
-    return Agent(
+def create_agent() -> tuple[Agent, MCPClient]:
+    mcp_client = MCPClient(lambda: stdio_client(server=MCP_SERVER_PARAMS))
+    mcp_client.start()
+    agent = Agent(
         model=BedrockModel(model_id="us.amazon.nova-lite-v1:0", region_name="us-west-2"),
         system_prompt=SYSTEM_PROMPT,
-        tools=[search_restaurants, get_menu],
+        tools=[search_restaurants, get_menu, *mcp_client.list_tools_sync()],
         conversation_manager=NullConversationManager(),
     )
+    return agent, mcp_client
 
 
 def run_task(case: Case) -> dict:
     """Agent 실행 → output + trajectory 반환"""
-    agent = create_agent()
-    result = agent(case.input)
-
-    trajectory = []
-    for msg in agent.messages:
-        if isinstance(msg, dict) and msg.get("role") == "assistant":
-            for content in msg.get("content", []):
-                if isinstance(content, dict) and "toolUse" in content:
-                    trajectory.append(content["toolUse"]["name"])
-
-    return {
-        "output": str(result),
-        "trajectory": trajectory,
-    }
+    agent, mcp_client = create_agent()
+    try:
+        result = agent(case.input)
+        trajectory = []
+        for msg in agent.messages:
+            if isinstance(msg, dict) and msg.get("role") == "assistant":
+                for content in msg.get("content", []):
+                    if isinstance(content, dict) and "toolUse" in content:
+                        trajectory.append(content["toolUse"]["name"])
+        return {
+            "output": str(result),
+            "trajectory": trajectory,
+        }
+    finally:
+        mcp_client.stop(None, None, None)
 
 
 # ── 3개의 실험 (케이스별 적합한 evaluator) ────────────
@@ -97,6 +110,28 @@ experiments = [
         "evaluators": [
             ToolCalled(tool_name="search_restaurants"),
             Contains(value="오마카세", case_sensitive=False),
+        ],
+    },
+    {
+        "name": "예약 가능 여부 확인",
+        "case": Case(
+            name="예약 가능 여부 확인",
+            input="트라토리아 벨라 내일 저녁 2명 예약 가능해?",
+        ),
+        "evaluators": [
+            ToolCalled(tool_name="check_reservation"),
+            Contains(value="예약", case_sensitive=False),
+        ],
+    },
+    {
+        "name": "비용 산정",
+        "case": Case(
+            name="비용 산정",
+            input="트라토리아 벨라에서 까르보나라 2인분 먹으면 얼마야?",
+        ),
+        "evaluators": [
+            ToolCalled(tool_name="estimate_cost"),
+            Contains(value="원", case_sensitive=False),
         ],
     },
 ]

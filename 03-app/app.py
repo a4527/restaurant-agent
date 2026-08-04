@@ -8,6 +8,7 @@ DiningConcierge — Streamlit 프로덕션 앱
 """
 
 import uuid
+import os
 import re
 import json
 import streamlit as st
@@ -15,7 +16,7 @@ import boto3
 
 # ── 설정 ──────────────────────────────────────────────
 RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-west-2:678498164624:runtime/DiningConcierge_DiningConcierge-aLEpSdHOiw"
-MEMORY_ID = "DiningConcierge_dining_memory-R5zXit9OAR"
+MEMORY_ID = "DiningConcierge_memory_v2-LQr1ybFdoo"
 REGION = "us-west-2"
 GATEWAY_WEB_SEARCH_URL = "https://dining-web-search-gateway-fiahbr5mdx.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
 
@@ -58,33 +59,67 @@ def web_search(query: str, max_results: int = 5) -> str | None:
 
 # ── Memory 조회 함수 ──────────────────────────────────
 def get_memory_status(actor_id: str) -> dict:
-    """Memory 현황 종합 조회 (list + retrieve + 직접 ID 조회)"""
+    """Memory 현황 종합 조회: 원본 대화 + 인덱싱된 long-term memory"""
     client = boto3.client("bedrock-agentcore", region_name=REGION)
-    result = {"indexed_preferences": [], "indexed_facts": [], "tracked_records": [], "error": None}
+    result = {
+        "conversations": [],       # 원본 대화 (short-term)
+        "indexed_preferences": [],  # 추출된 취향 (long-term)
+        "indexed_facts": [],        # 추출된 사실 (long-term)
+        "error": None,
+    }
 
-    # 1. list로 인덱싱 완료된 records 조회
+    # 1. 원본 대화 조회 (list_sessions → list_events)
+    try:
+        sessions_resp = client.list_sessions(memoryId=MEMORY_ID, actorId=actor_id)
+        for s in sessions_resp.get("sessionSummaries", []):
+            sid = s["sessionId"]
+            try:
+                events_resp = client.list_events(
+                    memoryId=MEMORY_ID, actorId=actor_id, sessionId=sid
+                )
+                for event in events_resp.get("events", []):
+                    for payload_item in event.get("payload", []):
+                        conv = payload_item.get("conversational", {})
+                        if conv:
+                            result["conversations"].append({
+                                "role": conv.get("role", "?"),
+                                "text": conv.get("content", {}).get("text", ""),
+                                "session_id": sid[:8],
+                                "timestamp": str(event.get("eventTimestamp", ""))[:19],
+                            })
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 2. 인덱싱된 long-term memory 조회 (retrieve_memory_records)
     for ns_type in ["preferences", "facts"]:
         ns = f"/users/{actor_id}/{ns_type}"
         try:
+            resp = client.retrieve_memory_records(
+                memoryId=MEMORY_ID,
+                namespacePath=f"/users/{actor_id}/",
+                searchCriteria={"searchQuery": "취향 선호 사실 정보", "topK": 20}
+            )
+            for r in resp.get("memoryRecordSummaries", []):
+                record_ns = r.get("namespaces", [])
+                if ns_type in str(record_ns):
+                    result[f"indexed_{ns_type}"].append(r)
+        except Exception:
+            pass
+        # namespace 직접 지정도 시도
+        try:
             resp = client.list_memory_records(memoryId=MEMORY_ID, namespace=ns)
-            result[f"indexed_{ns_type}"] = resp.get("memoryRecords", [])
+            for r in resp.get("memoryRecordSummaries", []):
+                if r not in result[f"indexed_{ns_type}"]:
+                    result[f"indexed_{ns_type}"].append(r)
         except Exception:
             pass
-        # trailing slash도 시도
         try:
-            resp2 = client.list_memory_records(memoryId=MEMORY_ID, namespace=f"{ns}/")
-            result[f"indexed_{ns_type}"].extend(resp2.get("memoryRecords", []))
-        except Exception:
-            pass
-
-    # 2. 로컬에 저장된 record ID로 직접 조회
-    tracked_ids = st.session_state.get("memory_record_ids", [])
-    for rec_id in tracked_ids:
-        try:
-            resp = client.get_memory_record(memoryId=MEMORY_ID, memoryRecordId=rec_id)
-            record = resp.get("memoryRecord", {})
-            if record:
-                result["tracked_records"].append(record)
+            resp = client.list_memory_records(memoryId=MEMORY_ID, namespace=f"{ns}/")
+            for r in resp.get("memoryRecordSummaries", []):
+                if r not in result[f"indexed_{ns_type}"]:
+                    result[f"indexed_{ns_type}"].append(r)
         except Exception:
             pass
 
@@ -104,7 +139,7 @@ def search_memory(actor_id: str, query: str) -> list:
                 namespace=ns,
                 searchCriteria={"searchQuery": query, "topK": 5}
             )
-            for r in resp.get("memoryRecords", []):
+            for r in resp.get("memoryRecordSummaries", []):
                 r["_namespace"] = ns.split("/")[-2] if ns.endswith("/") else ns.split("/")[-1]
                 results.append(r)
         except Exception:
@@ -113,28 +148,108 @@ def search_memory(actor_id: str, query: str) -> list:
     return results
 
 
-def save_preference_to_memory(actor_id: str, text: str) -> str | None:
-    """취향을 직접 Memory Record로 저장 (비동기 전략 대신 직접 저장)"""
-    import uuid as _uuid
+def save_conversation_to_memory(actor_id: str, user_text: str, assistant_text: str, session_id: str) -> str | None:
+    """대화를 create_event로 Memory에 기록 → 자동 extraction으로 취향 추출
+    유사한 내용이 이미 있으면 저장 스킵 (중복 방지)
+    """
     from datetime import datetime, timezone
     client = boto3.client("bedrock-agentcore", region_name=REGION)
 
+    # 유사한 내용이 이미 있는지 확인 (score >= 0.85이면 중복으로 간주)
     try:
-        resp = client.batch_create_memory_records(
-            memoryId=MEMORY_ID,
-            records=[{
-                "requestIdentifier": str(_uuid.uuid4()),
-                "namespaces": [f"/users/{actor_id}/preferences"],
-                "content": {"text": text},
-                "timestamp": datetime.now(timezone.utc),
-            }]
-        )
-        successful = resp.get("successfulRecords", [])
-        if successful:
-            return successful[0].get("memoryRecordId")
+        for ns in [f"/users/{actor_id}/preferences", f"/users/{actor_id}/facts"]:
+            resp = client.retrieve_memory_records(
+                memoryId=MEMORY_ID,
+                namespace=ns,
+                searchCriteria={"searchQuery": user_text, "topK": 3}
+            )
+            for r in resp.get("memoryRecordSummaries", []):
+                if r.get("score", 0) >= 0.85:
+                    print(f"[Memory] 중복 감지 (score={r['score']:.2f}), 저장 스킵")
+                    return None
     except Exception:
         pass
+
+    try:
+        resp = client.create_event(
+            memoryId=MEMORY_ID,
+            actorId=actor_id,
+            sessionId=session_id,
+            eventTimestamp=datetime.now(timezone.utc),
+            payload=[
+                {
+                    "conversational": {
+                        "content": {"text": user_text},
+                        "role": "USER"
+                    }
+                },
+                {
+                    "conversational": {
+                        "content": {"text": assistant_text},
+                        "role": "ASSISTANT"
+                    }
+                }
+            ]
+        )
+        event = resp.get("event", {})
+        print(f"[Memory] ✅ create_event 성공: {event.get('eventId')}")
+        return event.get("eventId")
+    except Exception as e:
+        print(f"[Memory] ❌ create_event 실패: {type(e).__name__}: {e}")
     return None
+
+
+# ── 세션 저장/로드 ────────────────────────────────────
+SESSION_DIR = "sessions"
+os.makedirs(SESSION_DIR, exist_ok=True)
+
+
+def get_session_file(session_id: str) -> str:
+    return os.path.join(SESSION_DIR, f"{session_id}.json")
+
+
+def save_session_to_file(session_id: str, messages: list, label: str = "") -> None:
+    """세션 대화 내용을 파일로 저장"""
+    data = {"session_id": session_id, "label": label, "messages": messages}
+    with open(get_session_file(session_id), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_session_from_file(session_id: str) -> dict:
+    """세션 파일 로드"""
+    path = get_session_file(session_id)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"session_id": session_id, "label": "", "messages": []}
+
+
+def list_saved_sessions() -> list[dict]:
+    """저장된 세션 목록 반환 (최신순)"""
+    sessions = []
+    for fname in os.listdir(SESSION_DIR):
+        if not fname.endswith(".json"):
+            continue
+        path = os.path.join(SESSION_DIR, fname)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            msg_count = len([m for m in data.get("messages", []) if m.get("role") == "user"])
+            sessions.append({
+                "session_id": data.get("session_id", fname[:-5]),
+                "label": data.get("label", ""),
+                "msg_count": msg_count,
+                "mtime": os.path.getmtime(path),
+            })
+        except Exception:
+            pass
+    return sorted(sessions, key=lambda x: x["mtime"], reverse=True)
+
+
+def delete_session_file(session_id: str) -> None:
+    path = get_session_file(session_id)
+    if os.path.exists(path):
+        os.remove(path)
 
 
 # ── Runtime 호출 ──────────────────────────────────────
@@ -147,24 +262,56 @@ def invoke_runtime(prompt: str, session_id: str, actor_id: str) -> tuple[str, li
     """AgentCore Runtime 호출. Returns: (응답 텍스트, tool_calls 리스트)"""
     client = boto3.client("bedrock-agentcore", region_name=REGION)
 
-    # Memory에서 취향 정보를 가져와 prompt에 주입
+    # Memory에서 취향 정보를 가져와 prompt에 주입 (시맨틱 검색)
     memory_context = ""
-    tracked_ids = st.session_state.get("memory_record_ids", [])
-    if tracked_ids:
+    try:
         prefs = []
-        for rec_id in tracked_ids:
+        # namespace 정확 매치 + namespacePath 하위 검색 모두 시도
+        search_targets = [
+            {"namespace": f"/users/{actor_id}/preferences"},
+            {"namespace": f"/users/{actor_id}/preferences/"},
+            {"namespace": f"/users/{actor_id}/facts"},
+            {"namespace": f"/users/{actor_id}/facts/"},
+            {"namespacePath": f"/users/{actor_id}/"},
+        ]
+        for target in search_targets:
             try:
-                resp = client.get_memory_record(memoryId=MEMORY_ID, memoryRecordId=rec_id)
-                record = resp.get("memoryRecord", {})
-                text = record.get("content", {}).get("text", "")
-                if text:
-                    prefs.append(text)
+                resp = client.retrieve_memory_records(
+                    memoryId=MEMORY_ID,
+                    **target,
+                    searchCriteria={"searchQuery": prompt, "topK": 5}
+                )
+                records = resp.get("memoryRecordSummaries", [])
+                if records:
+                    print(f"[Memory] retrieve {target} → {len(records)}건 ✅")
+                    for r in records:
+                        text = r.get("content", {}).get("text", "")
+                        if text and text not in prefs:
+                            prefs.append(text)
+                            print(f"[Memory]   - {text[:60]}")
+                    break  # 결과 나오면 더 시도할 필요 없음
             except Exception:
                 pass
-        if prefs:
+        if not prefs:
+            print(f"[Memory] ⚠️ 취향 0건 — prompt 주입 없음")
+        else:
             memory_context = "[사용자 취향 정보 (Memory에서 조회됨)]\n" + "\n".join(f"- {p}" for p in prefs) + "\n\n위 취향을 반드시 반영하여 답변하세요.\n\n"
+            print(f"[Memory] ✅ {len(prefs)}개 취향 주입")
+    except Exception as e:
+        print(f"[Memory] ❌ 오류: {type(e).__name__}: {e}")
 
     augmented_prompt = memory_context + prompt
+
+    # 이전 대화 컨텍스트 주입 (후속 질문 이해용)
+    history = st.session_state.get("messages", [])
+    if history:
+        recent = history[-6:]  # 최근 3턴(user+assistant) 
+        conv_lines = []
+        for m in recent:
+            role = "사용자" if m["role"] == "user" else "어시스턴트"
+            conv_lines.append(f"{role}: {m['content'][:200]}")
+        conv_context = "[이전 대화]\n" + "\n".join(conv_lines) + "\n\n[현재 질문]\n"
+        augmented_prompt = memory_context + conv_context + prompt
 
     payload = json.dumps({
         "prompt": augmented_prompt,
@@ -191,32 +338,68 @@ def invoke_runtime(prompt: str, session_id: str, actor_id: str) -> tuple[str, li
     body = response["response"].read().decode("utf-8")
 
     text_parts = []
+    tool_calls = []
+    tool_counter = 0
+
     for line in body.split("\n"):
-        if line.startswith("data:"):
-            data_str = line[5:].strip()
-            if not data_str:
-                continue
-            try:
-                data = json.loads(data_str)
-                evt = data.get("event", {})
-                cbd = evt.get("contentBlockDelta", {})
-                delta = cbd.get("delta", {})
-                if "text" in delta:
-                    text_parts.append(delta["text"])
-            except json.JSONDecodeError:
-                pass
+        if not line.startswith("data:"):
+            continue
+        data_str = line[5:].strip()
+        if not data_str:
+            continue
+        try:
+            data = json.loads(data_str)
+            evt = data.get("event", {})
+
+            # 텍스트 델타
+            cbd = evt.get("contentBlockDelta", {})
+            delta = cbd.get("delta", {})
+            if "text" in delta:
+                text_parts.append(delta["text"])
+
+            # 도구 호출 감지 (contentBlockStart → toolUse)
+            cbs = evt.get("contentBlockStart", {})
+            tool_use = cbs.get("start", {}).get("toolUse")
+            if tool_use:
+                tool_counter += 1
+                tool_calls.append({
+                    "order": tool_counter,
+                    "name": tool_use.get("name", "unknown"),
+                    "input": {},
+                })
+
+            # 도구 입력 파라미터 (contentBlockDelta → toolUse)
+            tool_delta = delta.get("toolUse", {})
+            if tool_delta and tool_calls:
+                try:
+                    inp = json.loads(tool_delta.get("input", "{}"))
+                    tool_calls[-1]["input"] = inp
+                except Exception:
+                    pass
+
+        except json.JSONDecodeError:
+            pass
 
     result = "".join(text_parts)
 
-    # tool_calls 메타데이터 추출
-    tool_calls = []
-    tool_calls_match = re.search(r"<!-- TOOL_CALLS:(.*?) -->", result, re.DOTALL)
-    if tool_calls_match:
-        try:
-            tool_calls = json.loads(tool_calls_match.group(1))
-        except json.JSONDecodeError:
-            pass
-        result = re.sub(r"\n?<!-- TOOL_CALLS:.*? -->", "", result, flags=re.DOTALL)
+    # 기존 방식 fallback: <!-- TOOL_CALLS: --> 주석에서도 파싱
+    if not tool_calls:
+        tool_calls_match = re.search(r"<!-- TOOL_CALLS:(.*?) -->", result, re.DOTALL)
+        if tool_calls_match:
+            try:
+                parsed = json.loads(tool_calls_match.group(1))
+                for i, tc in enumerate(parsed, 1):
+                    tool_calls.append({"order": i, "name": tc.get("name", "unknown"), "input": tc.get("input", {})})
+            except json.JSONDecodeError:
+                pass
+            result = re.sub(r"\n?<!-- TOOL_CALLS:.*? -->", "", result, flags=re.DOTALL)
+
+    # 응답 내용에서 도구 호출 키워드 감지 (최후 수단)
+    if not tool_calls:
+        if "search_restaurants" in body:
+            tool_calls.append({"order": 1, "name": "search_restaurants", "input": {}})
+        if "get_menu" in body:
+            tool_calls.append({"order": len(tool_calls)+1, "name": "get_menu", "input": {}})
 
     # <thinking> 태그 제거
     result = re.sub(r"<thinking>.*?</thinking>\n?", "", result, flags=re.DOTALL)
@@ -280,8 +463,8 @@ if "memory_cache" not in st.session_state:
     st.session_state.memory_cache = None
 if "referenced_memories" not in st.session_state:
     st.session_state.referenced_memories = []
-if "memory_record_ids" not in st.session_state:
-    st.session_state.memory_record_ids = []
+if "session_label" not in st.session_state:
+    st.session_state.session_label = ""
 
 # ── 사이드바 ─────────────────────────────────────────
 with st.sidebar:
@@ -294,17 +477,81 @@ with st.sidebar:
                   value=st.session_state.actor_id,
                   on_change=lambda: setattr(st.session_state, "actor_id", st.session_state.actor_id_input))
 
-    st.caption(f"세션: `{st.session_state.current_session[:20]}...`")
+    # 현재 세션 정보
+    st.caption(f"현재: `{st.session_state.current_session[:16]}...` | {len(st.session_state.messages)//2}턴")
+
+    # 세션 이름 지정
+    new_label = st.text_input("세션 이름 (선택)", value=st.session_state.session_label,
+                               placeholder="예: 데이트 식당 탐색", key="session_label_input")
+    if new_label != st.session_state.session_label:
+        st.session_state.session_label = new_label
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🆕 새 대화", use_container_width=True):
+        if st.button("🆕 새 세션", use_container_width=True):
+            # 현재 세션 저장
+            if st.session_state.messages:
+                save_session_to_file(
+                    st.session_state.current_session,
+                    st.session_state.messages,
+                    st.session_state.session_label,
+                )
+            # 새 세션 시작
             st.session_state.current_session = generate_session_id()
             st.session_state.messages = []
             st.session_state.tool_logs = []
             st.session_state.referenced_memories = []
+            st.session_state.session_label = ""
             st.rerun()
     with col2:
+        if st.button("💾 저장", use_container_width=True):
+            save_session_to_file(
+                st.session_state.current_session,
+                st.session_state.messages,
+                st.session_state.session_label,
+            )
+            st.toast("세션이 저장되었습니다.")
+
+    # 저장된 세션 목록
+    saved = list_saved_sessions()
+    if saved:
+        st.markdown("**저장된 세션**")
+        for s in saved[:8]:
+            sid = s["session_id"]
+            label = s["label"] or sid[:12] + "..."
+            is_current = sid == st.session_state.current_session
+            marker = "▶ " if is_current else ""
+            col_btn, col_del = st.columns([4, 1])
+            with col_btn:
+                if st.button(f"{marker}{label} ({s['msg_count']}턴)",
+                             key=f"sess_{sid}", use_container_width=True,
+                             disabled=is_current):
+                    # 현재 세션 저장 후 선택 세션으로 전환
+                    if st.session_state.messages:
+                        save_session_to_file(
+                            st.session_state.current_session,
+                            st.session_state.messages,
+                            st.session_state.session_label,
+                        )
+                    data = load_session_from_file(sid)
+                    st.session_state.current_session = sid
+                    st.session_state.messages = data["messages"]
+                    st.session_state.session_label = data.get("label", "")
+                    st.session_state.tool_logs = []
+                    st.session_state.referenced_memories = []
+                    st.rerun()
+            with col_del:
+                if st.button("🗑️", key=f"del_{sid}"):
+                    delete_session_file(sid)
+                    if sid == st.session_state.current_session:
+                        st.session_state.current_session = generate_session_id()
+                        st.session_state.messages = []
+                        st.session_state.tool_logs = []
+                        st.session_state.session_label = ""
+                    st.rerun()
+
+    col1, col2 = st.columns(2)
+    with col1:
         if st.button("🔄 Memory 새로고침", use_container_width=True):
             st.session_state.memory_cache = None
             st.rerun()
@@ -320,43 +567,46 @@ with st.sidebar:
 
     mem = st.session_state.memory_cache
 
-    # 인덱싱 완료된 records
+    # 원본 대화 (Short-term)
+    conversations = mem.get("conversations", [])
+    # 인덱싱 완료 (Long-term)
     idx_pref = mem.get("indexed_preferences", [])
     idx_facts = mem.get("indexed_facts", [])
-    tracked = mem.get("tracked_records", [])
-
     total_indexed = len(idx_pref) + len(idx_facts)
-    total_tracked = len(tracked)
 
-    st.markdown(f"**인덱싱 완료**: {total_indexed}개 | **저장됨(대기)**: {total_tracked}개")
+    st.markdown(f"**대화 기록**: {len(conversations)//2}턴 | **추출된 기억**: {total_indexed}개")
 
-    # 직접 저장된 (tracked) records 표시
-    if tracked:
-        with st.expander(f"💾 저장된 취향 ({total_tracked}개)", expanded=True):
-            for r in tracked:
-                content = r.get("content", {}).get("text", str(r))
-                ns_list = r.get("namespaces", [])
-                ns_label = "preferences" if "preferences" in str(ns_list) else "facts"
-                created = str(r.get("createdAt", ""))[:19]
-                st.markdown(f"• **{content}**")
-                st.caption(f"  📁 {ns_label} · ⏰ {created}")
+    # 원본 대화 표시
+    if conversations:
+        user_convs = [c for c in conversations if c["role"] == "USER"]
+        with st.expander(f"💬 원본 대화 ({len(user_convs)}개 질문)", expanded=False):
+            for c in conversations:
+                role_icon = "👤" if c["role"] == "USER" else "🤖"
+                text = c["text"][:80]
+                st.markdown(f"{role_icon} {text}")
+                if c["role"] == "ASSISTANT":
+                    st.caption(f"  세션: {c['session_id']} · {c['timestamp']}")
+                    st.markdown("---")
+    else:
+        st.info("💡 대화하면 Memory에 자동 저장됩니다.\n\n"
+                "예: '일식 좋아해', '매운 거 못 먹어'")
 
-    # 인덱싱 완료된 records
+    # 인덱싱된 취향 (Long-term)
     if idx_pref:
-        with st.expander(f"❤️ 취향 (인덱싱 완료, {len(idx_pref)}개)", expanded=True):
+        with st.expander(f"❤️ 추출된 취향 ({len(idx_pref)}개)", expanded=True):
             for r in idx_pref:
                 content = r.get("content", {}).get("text", str(r))
                 st.markdown(f"• {content[:100]}")
 
+    # 인덱싱된 사실 (Long-term)
     if idx_facts:
-        with st.expander(f"📝 기억된 사실 ({len(idx_facts)}개)", expanded=True):
+        with st.expander(f"📝 추출된 사실 ({len(idx_facts)}개)", expanded=True):
             for r in idx_facts:
                 content = r.get("content", {}).get("text", str(r))
                 st.markdown(f"• {content[:100]}")
 
-    if total_indexed == 0 and total_tracked == 0:
-        st.info("💡 취향을 입력하면 Memory에 직접 저장됩니다.\n\n"
-                "예: '일식 좋아해', '매운 거 못 먹어'")
+    if total_indexed == 0 and conversations:
+        st.caption("⏳ 취향 추출 중... (인덱싱 완료 후 표시됩니다)")
 
     # 참조된 Memory
     if st.session_state.referenced_memories:
@@ -443,10 +693,9 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 강남 식당 추천
                 render_restaurant_cards(result, tool_calls)
 
             # 도구 로그 업데이트
-            base_order = len(st.session_state.tool_logs)
-            for i, tc in enumerate(tool_calls, 1):
+            for tc in tool_calls:
                 st.session_state.tool_logs.append({
-                    "order": base_order + i,
+                    "order": len(st.session_state.tool_logs) + 1,
                     "name": tc.get("name", "unknown"),
                     "input": tc.get("input", {}),
                 })
@@ -458,15 +707,22 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 강남 식당 추천
         "tool_calls": tool_calls,
     })
 
-    # 취향 키워드 감지 → 직접 Memory에 저장
-    preference_keywords = ["좋아해", "좋아해요", "좋아합니다", "좋아하", "선호",
-                           "싫어해", "싫어", "못 먹", "못먹", "안 먹", "안먹",
-                           "알레르기", "즐겨", "자주 먹"]
-    if any(kw in prompt for kw in preference_keywords):
-        rec_id = save_preference_to_memory(st.session_state.actor_id, prompt)
-        if rec_id:
-            st.session_state.memory_record_ids.append(rec_id)
-            st.session_state.memory_cache = None  # 캐시 갱신
+    # 대화를 Memory에 기록 → 자동 extraction으로 취향 추출
+    event_id = save_conversation_to_memory(
+        st.session_state.actor_id,
+        prompt,
+        result,
+        st.session_state.current_session,
+    )
+    if event_id:
+        st.session_state.memory_cache = None  # 캐시 갱신
+
+    # 세션 파일 자동 저장
+    save_session_to_file(
+        st.session_state.current_session,
+        st.session_state.messages,
+        st.session_state.session_label,
+    )
 
     # Memory 참조 확인 (응답 후 시맨틱 검색)
     if prompt:

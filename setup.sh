@@ -144,12 +144,21 @@ if [ "$RUN_AGENT" = true ]; then
     echo "✅ 03-app/app.py MEMORY_ID 업데이트: $MEMORY_ID"
   fi
 
-  # Gateway URL을 03-app/app.py에 자동 반영
+  # Gateway URL을 03-app/app.py와 02-agent/main.py에 자동 반영
   GATEWAY_ID=$(npx @aws/agentcore status 2>/dev/null | grep -oP 'dining-web-search[^\s]+' | head -1)
   if [ -n "$GATEWAY_ID" ]; then
     GATEWAY_URL="https://${GATEWAY_ID}.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
     sed -i "s|GATEWAY_WEB_SEARCH_URL = \".*\"|GATEWAY_WEB_SEARCH_URL = \"$GATEWAY_URL\"|" 03-app/app.py
     echo "✅ 03-app/app.py GATEWAY_WEB_SEARCH_URL 업데이트: $GATEWAY_URL"
+    # main.py의 환경변수 기본값도 업데이트
+    sed -i "s|\"GATEWAY_WEB_SEARCH_URL\", \".*\"|\"GATEWAY_WEB_SEARCH_URL\", \"$GATEWAY_URL\"|" 02-agent/app/DiningConcierge/main.py
+    echo "✅ 02-agent/main.py GATEWAY_WEB_SEARCH_URL 업데이트: $GATEWAY_URL"
+  fi
+
+  # Memory ID를 02-agent/main.py에도 반영
+  if [ -n "$MEMORY_ID" ]; then
+    sed -i "s|\"MEMORY_ID\", \".*\"|\"MEMORY_ID\", \"$MEMORY_ID\"|" 02-agent/app/DiningConcierge/main.py
+    echo "✅ 02-agent/main.py MEMORY_ID 업데이트: $MEMORY_ID"
   fi
 
   echo ""

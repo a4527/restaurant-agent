@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import boto3
 
 
@@ -26,52 +27,101 @@ def build_response(status_code, body):
 
 
 def lambda_handler(event, context):
-    # Handle CORS preflight
-    http_method = event.get("httpMethod", "")
-    if http_method == "OPTIONS":
+    # CORS preflight
+    if event.get("httpMethod", "") == "OPTIONS":
         return build_response(200, {"message": "OK"})
 
     try:
         body = json.loads(event.get("body", "{}"))
         message = body.get("message", "")
-        session_id = body.get("session_id", "default")
+        session_id = body.get("session_id", "default-session")
+        actor_id = body.get("actor_id", "anonymous")
+        conversation_context = body.get("conversation_context", "")
 
         if not message:
             return build_response(400, {"error": "message field is required"})
 
         # AgentCore Runtime 호출
+        payload = {
+            "prompt": message,
+            "session_id": session_id,
+            "actor_id": actor_id,
+        }
+        if conversation_context:
+            payload["conversation_context"] = conversation_context
+
         response = agentcore_client.invoke_agent_runtime(
             agentRuntimeArn=RUNTIME_ARN,
-            payload=json.dumps({
-                "prompt": message,
-            }).encode("utf-8"),
+            payload=json.dumps(payload).encode("utf-8"),
             contentType="application/json",
             accept="application/json",
+            runtimeSessionId=session_id,
         )
 
-        # 스트리밍 응답 파싱 (text/event-stream)
         stream_data = response["response"].read().decode("utf-8")
 
-        # SSE 형식에서 텍스트 추출
+        # SSE 파싱 — 텍스트 + 도구 호출
         reply_parts = []
+        tool_calls = []
+        tool_counter = 0
+
         for line in stream_data.split("\n"):
-            if line.startswith("data: "):
-                try:
-                    event_data = json.loads(line[6:])
-                    # contentBlockDelta에서 텍스트 추출
-                    delta = event_data.get("event", {}).get("contentBlockDelta", {})
-                    text = delta.get("delta", {}).get("text", "")
-                    if text:
-                        reply_parts.append(text)
-                    # 에러 체크
-                    if "error" in event_data:
-                        reply_parts.append(event_data["error"])
-                except json.JSONDecodeError:
-                    pass
+            if not line.startswith("data: "):
+                continue
+            try:
+                event_data = json.loads(line[6:])
+                evt = event_data.get("event", {})
 
-        reply = "".join(reply_parts) if reply_parts else "응답을 생성하지 못했습니다."
+                # 텍스트
+                text = evt.get("contentBlockDelta", {}).get("delta", {}).get("text", "")
+                if text:
+                    reply_parts.append(text)
 
-        return build_response(200, {"reply": reply})
+                # 도구 호출
+                tool_use = evt.get("contentBlockStart", {}).get("start", {}).get("toolUse")
+                if tool_use:
+                    tool_counter += 1
+                    tool_calls.append({
+                        "order": tool_counter,
+                        "name": tool_use.get("name", "unknown"),
+                        "input": {},
+                    })
+
+                # 도구 입력 파라미터
+                tool_delta = evt.get("contentBlockDelta", {}).get("delta", {}).get("toolUse", {})
+                if tool_delta and tool_calls:
+                    try:
+                        inp = json.loads(tool_delta.get("input", "{}"))
+                        tool_calls[-1]["input"] = inp
+                    except Exception:
+                        pass
+
+            except json.JSONDecodeError:
+                pass
+
+        reply = "".join(reply_parts)
+
+        # <thinking> 태그 제거
+        reply = re.sub(r"<thinking>.*?</thinking>\n?", "", reply, flags=re.DOTALL)
+
+        # 응답 내용에서 도구 호출 키워드 감지 (fallback)
+        if not tool_calls:
+            if "search_restaurants" in stream_data:
+                tool_calls.append({"order": 1, "name": "search_restaurants", "input": {}})
+            if "get_menu" in stream_data:
+                tool_calls.append({"order": len(tool_calls)+1, "name": "get_menu", "input": {}})
+            if "check_reservation" in stream_data:
+                tool_calls.append({"order": len(tool_calls)+1, "name": "check_reservation", "input": {}})
+            if "create_reservation" in stream_data:
+                tool_calls.append({"order": len(tool_calls)+1, "name": "create_reservation", "input": {}})
+            if "estimate_cost" in stream_data:
+                tool_calls.append({"order": len(tool_calls)+1, "name": "estimate_cost", "input": {}})
+
+        return build_response(200, {
+            "reply": reply.strip() or "응답을 생성하지 못했습니다.",
+            "tool_calls": tool_calls,
+            "session_id": session_id,
+        })
 
     except Exception as e:
         print(f"Error: {str(e)}")
