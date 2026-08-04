@@ -258,6 +258,32 @@ Settings → Secrets and variables → Actions에 등록:
 - AWS_SESSION_TOKEN        ← 워크샵/임시 자격증명 사용 시 필수
 ```
 
+### 자격증명 만료 시 갱신 방법
+
+워크샵/임시 계정은 자격증명이 주기적으로 만료됩니다. 만료 시 Actions에서 아래 오류가 발생합니다:
+```
+Error: The security token included in the request is expired
+```
+
+**갱신 절차:**
+
+1. 워크샵 포털에서 새 자격증명 발급
+2. 로컬 환경 갱신:
+```bash
+# ~/.aws/credentials 파일 업데이트
+aws configure
+# 또는 직접 편집: ~/.aws/credentials
+```
+3. GitHub Secrets 갱신:
+```
+GitHub 레포 → Settings → Secrets and variables → Actions
+→ AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN 세 개 모두 Update
+```
+4. 실패한 워크플로우 재실행:
+```
+GitHub Actions → 실패한 워크플로우 → Re-run failed jobs
+```
+
 ### 사용 예시
 
 ```bash
