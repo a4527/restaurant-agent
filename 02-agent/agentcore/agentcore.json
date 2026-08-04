@@ -15,8 +15,7 @@
       "codeLocation": "app/DiningConcierge/",
       "runtimeVersion": "PYTHON_3_14",
       "networkMode": "PUBLIC",
-      "protocol": "HTTP",
-      "architecture": "X86_64"
+      "protocol": "HTTP"
     }
   ],
   "memories": [],
