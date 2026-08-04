@@ -172,10 +172,10 @@ LLM(Nova Lite)은 학습 데이터에 없는 식당 정보를 알 수 없습니�
 
 | # | 위치 | 캡처 내용 |
 |---|------|-----------|
-| 1 | AWS 콘솔 → S3 → `dining-kb-data-678498164624` | `restaurant-docs/` 폴더 내 17개 파일 목록 (docx 8 + metadata json 8 + xlsx 1) |
-| 2 | AWS 콘솔 → OpenSearch Serverless → Collections | `dining-kb-collection` ACTIVE 상태 화면 |
-| 3 | AWS 콘솔 → Bedrock → Knowledge Bases | `dining-restaurants-kb` Active 상태 + Data Source 연결 |
-| 4 | AWS 콘솔 → Bedrock → KB → Sync | Ingestion Job 완료 (COMPLETE) 상태 |
+| 1 | AWS 콘솔 → S3 → `dining-kb-data-678498164624` | `restaurant-docs/` 폴더 내 17개 파일 목록 (docx 8 + metadata json 8 + xlsx 1) |![alt text](image/image.png)
+| 2 | AWS 콘솔 → OpenSearch Serverless → Collections | `dining-kb-collection` ACTIVE 상태 화면 | ![alt text](image/image-1.png)
+| 3 | AWS 콘솔 → Bedrock → Knowledge Bases | `dining-restaurants-kb` Active 상태 + Data Source 연결 | ![alt text](image/image-2.png)
+| 4 | AWS 콘솔 → Bedrock → KB → Sync | Ingestion Job 완료 (COMPLETE) 상태 | ![alt text](image/image-3.png)
 | 5 | 터미널 | `01-kb/setup-kb.sh` 실행 전체 로그 (KB_ID=LOAIJ2HJXE 출력) |
 
 ---
@@ -280,7 +280,7 @@ Strands Agent는 시스템 프롬프트와 도구 설명(docstring)을 기반으
 |---|------|-----------|
 | 1 | 터미널 | 에이전트 실행 로그 — 도구 호출 과정 (search → menu → reservation 체이닝) |
 | 2 | Streamlit 앱 | 채팅 대화 화면 + 사이드바 도구 호출 로그 |
-| 3 | Streamlit 앱 | 식당 카드 UI (이름/카테고리/가격대/위치/분위기 구조화 출력) |
+| 3 | Streamlit 앱 | 식당 카드 UI (이름/카테고리/가격대/위치/분위기 구조화 출력) | ![alt text](image/image-4.png)
 | 4 | 코드 | `tools.py` 핵심 — `@tool` + `retrieve()` 호출 부분 |
 | 5 | 코드 | `mcp_server.py` 핵심 — 3개 MCP 도구 정의 부분 |
 
@@ -372,7 +372,7 @@ npx @aws/agentcore status
 |---|------|-----------|
 | 1 | 터미널 | `npx @aws/agentcore deploy --yes` 실행 로그 (CDK deploy → Runtime 생성) |
 | 2 | 터미널 | `npx @aws/agentcore status` → READY 상태 + ARN 출력 |
-| 3 | AWS 콘솔 → Bedrock → AgentCore → Runtimes | Runtime 상세 화면 (상태, ARN, 버전) |
+| 3 | AWS 콘솔 → Bedrock → AgentCore → Runtimes | Runtime 상세 화면 (상태, ARN, 버전) | ![alt text](image/image-5.png) ![alt text](image/image-6.png)
 
 ---
 
@@ -469,10 +469,10 @@ Gateway (us-east-1) → MCP 프로토콜로 웹 검색 수행
 
 | # | 위치 | 캡처 내용 |
 |---|------|-----------|
-| 1 | AWS 콘솔 → AgentCore → Memory | Memory 상세 (이름, 전략 USER_PREFERENCE+SEMANTIC, 상태) |
-| 2 | AWS 콘솔 → AgentCore → Gateways (us-east-1 선택) | Gateway READY 상태, 프로토콜 MCP |
-| 3 | Streamlit 앱 | 취향 입력 → 다음 대화에서 반영된 추천 (예: "매운 거 좋아해" → 이후 매운 식당 우선) |
-| 4 | Streamlit 앱 | 웹 검색 결과 포함 답변 (예: "강남역 주변 축제" 검색 결과) |
+| 1 | AWS 콘솔 → AgentCore → Memory | Memory 상세 (이름, 전략 USER_PREFERENCE+SEMANTIC, 상태) | ![alt text](image/image-7.png)
+| 2 | AWS 콘솔 → AgentCore → Gateways (us-east-1 선택) | Gateway READY 상태, 프로토콜 MCP | ![alt text](image/image-8.png)
+| 3 | Streamlit 앱 | 취향 입력 → 다음 대화에서 반영된 추천 (예: "매운 거 좋아해" → 이후 매운 식당 우선) | ![alt text](image/image-9.png) ![alt text](image/image-10.png) ![alt text](image/image-11.png)
+| 4 | Streamlit 앱 | 웹 검색 결과 포함 답변 (예: "강남역 주변 축제" 검색 결과) | ![alt text](image/image-12.png)
 
 ---
 
@@ -591,8 +591,8 @@ curl -X POST https://xxx.execute-api.us-west-2.amazonaws.com/Prod/chat \
 |---|------|-----------|
 | 1 | 터미널 | `sam build && sam deploy` 실행 결과 (스택 생성 + API URL 출력) |
 | 2 | 터미널 | `curl -X POST .../chat` 테스트 — 정상 응답 확인 |
-| 3 | AWS 콘솔 → API Gateway | REST API 리소스 (`/chat` POST + OPTIONS) |
-| 4 | AWS 콘솔 → Lambda | 함수 설정 (환경변수 RUNTIME_ARN, 메모리 256MB, 타임아웃 90s) |
+| 3 | AWS 콘솔 → API Gateway | REST API 리소스 (`/chat` POST + OPTIONS) | ![alt text](image/image-13.png)
+| 4 | AWS 콘솔 → Lambda | 함수 설정 (환경변수 RUNTIME_ARN, 메모리 256MB, 타임아웃 90s) | ![alt text](image/image-14.png)
 
 ---
 
@@ -720,12 +720,12 @@ CloudFront `CustomErrorResponses`에서 403/404를 `/index.html`로 리다이렉
 
 | # | 위치 | 캡처 내용 |
 |---|------|-----------|
-| 1 | 브라우저 | CloudFront URL 접속 → 채팅 초기 화면 ("메시지를 입력해주세요") |
-| 2 | 브라우저 | 대화 진행 중 — 사용자 메시지(오른쪽) + AI 응답(왼쪽) |
-| 3 | 브라우저 | 로딩 인디케이터 표시 상태 (보라색 AI 아바타 + "응답 중...") |
-| 4 | AWS 콘솔 → CloudFront | Distribution 상태 (Enabled, Domain: d2x89fcv3dzcu5.cloudfront.net) |
-| 5 | AWS 콘솔 → S3 → `dining-frontend-678498164624` | 빌드 파일 목록 (index.html, static/js, static/css) |
-
+| 1 | 브라우저 | CloudFront URL 접속 → 채팅 초기 화면 ("메시지를 입력해주세요") | ![alt text](image/image-15.png)
+| 2 | 브라우저 | 대화 진행 중 — 사용자 메시지(오른쪽) + AI 응답(왼쪽) | ![alt text](image/image-17.png)
+| 3 | 브라우저 | 로딩 인디케이터 표시 상태 (보라색 AI 아바타 + "응답 중...") | ![alt text](image/image-16.png)
+| 4 | AWS 콘솔 → CloudFront | Distribution 상태 (Enabled, Domain: d2x89fcv3dzcu5.cloudfront.net) | ![alt text](image/image-18.png)
+| 5 | AWS 콘솔 → S3 → `dining-frontend-678498164624` | 빌드 파일 목록 (index.html, static/js, static/css) | ![alt text](image/image-19.png)
+![alt text](image/image-21.png) ![alt text](image/image-22.png) ![alt text](image/image-23.png)
 ---
 
 ## STEP 7 — CI/CD (GitHub Actions)
@@ -859,7 +859,7 @@ else:
 
 | # | 위치 | 캡처 내용 |
 |---|------|-----------|
-| 1 | GitHub → Actions 탭 | 3개 워크플로우 목록 (agent, api, frontend) |
+| 1 | GitHub → Actions 탭 | 3개 워크플로우 목록 (agent, api, frontend) | ![alt text](image/image-20.png)
 | 2 | GitHub → Actions → agent.yml 실행 | `evaluate` → `deploy` 2단계 통과 화면 |
 | 3 | GitHub → Actions → frontend.yml 실행 | build → S3 sync → CloudFront invalidation 통과 |
 | 4 | GitHub → repo Settings → Secrets | AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN 등록 |
