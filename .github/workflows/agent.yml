@@ -114,19 +114,37 @@ jobs:
             --output text 2>/dev/null || echo "")
 
           if [ -z "$GATEWAY_ID" ] || [ "$GATEWAY_ID" = "None" ]; then
-            echo "Gateway 없음 → CLI로 생성 시도"
-            cd 02-agent
-            npx @aws/agentcore add gateway \
-              --name dining-web-search \
-              --protocol-type MCP \
-              --authorizer-type NONE 2>/dev/null && \
-            npx @aws/agentcore add gateway-target \
-              --name web-search \
-              --gateway dining-web-search \
-              --type connector \
-              --connector web-search 2>/dev/null && \
-            echo "✅ Gateway 생성 완료" || \
-            echo "⚠️  Gateway 생성 실패 (계정 미지원일 수 있음 — 계속 진행)"
+            echo "Gateway 없음 → AWS CLI로 생성"
+
+            # Gateway role ARN 조회
+            ROLE_ARN=$(aws iam get-role --role-name dining-gateway-role \
+              --query "Role.Arn" --output text 2>/dev/null || echo "")
+
+            if [ -z "$ROLE_ARN" ]; then
+              echo "⚠️  dining-gateway-role 없음 — Gateway 생성 건너뜀"
+            else
+              RESULT=$(aws bedrock-agentcore-control create-gateway \
+                --name "dining-web-search" \
+                --protocol-type MCP \
+                --authorizer-type NONE \
+                --role-arn "$ROLE_ARN" \
+                --region us-east-1 2>&1)
+              echo "$RESULT"
+              GATEWAY_ID=$(echo "$RESULT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['gatewayId'])" 2>/dev/null || echo "")
+
+              # READY 대기
+              echo "Gateway READY 대기 중..."
+              for i in $(seq 1 12); do
+                STATUS=$(aws bedrock-agentcore-control get-gateway \
+                  --gateway-identifier "$GATEWAY_ID" \
+                  --region us-east-1 \
+                  --query "status" --output text 2>/dev/null || echo "")
+                echo "  상태: $STATUS ($i/12)"
+                [ "$STATUS" = "READY" ] && break
+                sleep 10
+              done
+              echo "✅ Gateway 생성 완료: $GATEWAY_ID"
+            fi
           else
             echo "✅ 기존 Gateway 재사용: $GATEWAY_ID"
           fi
