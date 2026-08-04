@@ -50,14 +50,36 @@ def _init_tools():
     except Exception as e:
         log.warning(f"MCP stdio 초기화 실패: {e}")
 
-    # Web Search Gateway (MCP HTTP)
+    # Web Search Gateway (MCP HTTP) → @tool로 래핑하여 이름 단순화
     if GATEWAY_WEB_SEARCH_URL:
         try:
             _mcp_web = MCPClient(lambda: streamablehttp_client(url=GATEWAY_WEB_SEARCH_URL))
             _mcp_web.start()
             web_tools = _mcp_web.list_tools_sync()
-            _extra_tools.extend(web_tools)
-            log.info(f"Web Search Gateway 연결 성공: {[t.tool_name for t in web_tools]}")
+
+            # web-search___WebSearch 이름 문제 → 직접 @tool로 래핑
+            from strands import tool as strands_tool
+
+            @strands_tool
+            def WebSearch(query: str, maxResults: int = 5) -> str:
+                """실시간 웹 검색으로 날씨, 이벤트, 뉴스 등 최신 정보를 조회합니다.
+                Args:
+                    query: 검색 쿼리
+                    maxResults: 최대 결과 수 (기본 5)
+                """
+                result = _mcp_web.call_tool_sync(
+                    tool_use_id="websearch",
+                    name="web-search___WebSearch",
+                    arguments={"query": query, "maxResults": maxResults}
+                )
+                if result.get("status") == "success":
+                    content = result.get("content", [])
+                    if content:
+                        return content[0].get("text", "검색 결과 없음")
+                return "웹 검색 결과를 가져오지 못했습니다."
+
+            _extra_tools.append(WebSearch)
+            log.info("Web Search Gateway 연결 성공 (WebSearch 도구 래핑 완료)")
         except Exception as e:
             log.warning(f"Web Search Gateway 연결 실패: {e}")
 
