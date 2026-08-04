@@ -38,6 +38,10 @@ def lambda_handler(event, context):
         actor_id = body.get("actor_id", "anonymous")
         conversation_context = body.get("conversation_context", "")
 
+        # runtimeSessionId 최소 33자 요구사항 충족
+        if len(session_id) < 33:
+            session_id = session_id + "-" + "0" * (33 - len(session_id) - 1)
+
         if not message:
             return build_response(400, {"error": "message field is required"})
 

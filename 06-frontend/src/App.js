@@ -37,7 +37,11 @@ const TOOL_ICONS = {
 
 // ── 유틸 ──────────────────────────────────────────────
 function generateSessionId() {
-  return `${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+  // runtimeSessionId 최소 33자 요구사항 충족
+  const a = Math.random().toString(36).slice(2, 12);
+  const b = Date.now().toString(36);
+  const c = Math.random().toString(36).slice(2, 12);
+  return `${a}-${b}-${c}`;
 }
 
 function loadSessions() {
