@@ -6,6 +6,8 @@ on:
     paths:
       - '02-agent/**'
       - '04-pipeline/**'
+      - '.github/workflows/agent.yml'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 env:

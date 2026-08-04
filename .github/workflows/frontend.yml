@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '06-frontend/**'
+      - '.github/workflows/frontend.yml'
   workflow_dispatch:
 
 env:
