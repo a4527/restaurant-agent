@@ -178,4 +178,91 @@ records = resp.get("memoryRecordSummaries", [])
 
 ---
 
+## 14. runtimeSessionId 최소 33자 요구사항
+
+**증상**: 프론트엔드에서 채팅 시 "응답을 생성하지 못했습니다." 표시
+
+**Lambda 로그**:
+```
+Invalid length for parameter runtimeSessionId, value: 17, valid min length: 33
+```
+
+**원인**: 프론트엔드 `generateSessionId()`가 생성한 session_id가 17자로 `runtimeSessionId` 최소 33자 요구사항 미충족
+
+**해결**:
+```javascript
+// Frontend App.js
+function generateSessionId() {
+  const a = Math.random().toString(36).slice(2, 12);
+  const b = Date.now().toString(36);
+  const c = Math.random().toString(36).slice(2, 12);
+  return `${a}-${b}-${c}`; // 33자 이상 보장
+}
+```
+```python
+# Lambda app.py — 방어적 패딩
+if len(session_id) < 33:
+    session_id = session_id + "-" + "0" * (33 - len(session_id) - 1)
+```
+
+**상태**: ✅ 해결
+
+---
+
+## 15. RUNTIME_ARN SSM 저장 시 문자열 잘림
+
+**증상**: Lambda 환경변수 `RUNTIME_ARN`이 `"arn:aws:bedrock-agentcore:us-west-"` 로 잘려서 저장됨
+
+**원인**: `agent.yml`에서 `grep -oP 'arn:aws:bedrock-agentcore:[^\s)]+'` 패턴으로 파싱 시 줄 끝 문자(`\t`, `\r` 등)에 의해 ARN이 잘림
+
+**해결**: grep 파싱 제거 → AWS CLI 직접 조회로 변경
+```bash
+RUNTIME_ARN=$(aws bedrock-agentcore-control list-agent-runtimes \
+  --region us-west-2 \
+  --query "agentRuntimes[?status=='READY'].agentRuntimeArn | [0]" \
+  --output text)
+```
+
+**상태**: ✅ 해결
+
+---
+
+## 16. Lambda에 Memory 미연동으로 취향 반영 안 됨
+
+**증상**: 프론트엔드에서 취향을 말해도 다음 대화에서 기억 못함
+
+**원인**:
+1. Lambda 환경변수에 `MEMORY_ID` 없음
+2. Lambda 코드에 Memory 조회 → prompt 주입 로직 없음
+
+**해결**:
+- `template.yaml`에 `MemoryId` Parameter 추가
+- `api.yml`에서 SSM `/dining/MEMORY_ID` 읽어서 SAM 배포 시 주입
+- Lambda `app.py`에 `get_memory_context()` 함수 추가 → prompt 앞에 취향 주입
+- `/memory` GET 엔드포인트 추가 → 프론트엔드에서 Memory 현황 조회 가능
+
+**상태**: ✅ 해결
+
+---
+
+## 17. CDK 배포 시 Memory/Gateway 리소스 충돌
+
+**증상**:
+```
+Memory is in transitional state CREATING. Cannot delete memory.
+Connector integration web-search is not available for this account.
+```
+
+**원인**:
+- Memory가 CREATING 중인데 CDK가 삭제 시도
+- web-search 커넥터가 워크샵 계정에서 미지원
+
+**해결**: `agentcore.json`에서 `memories`, `agentCoreGateways` 항목 제거 → CDK 외부에서 관리
+- Memory: `agent.yml`에서 AWS CLI `create-memory`로 직접 생성 (멱등성 보장)
+- Gateway: `agent.yml`에서 `npx @aws/agentcore add gateway`로 생성 시도, 실패해도 계속 진행
+
+**상태**: ✅ 해결
+
+---
+
 *마지막 업데이트: 2026-08-05*

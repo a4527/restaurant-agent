@@ -1046,20 +1046,30 @@ REACT_APP_API_URL → npm run build → 프론트엔드에 번들
 | `02-agent/main.py` | MCP stdio(예약/비용) + Web Search Gateway + Memory 취향조회/저장 + 대화 컨텍스트 추가 |
 | `02-agent/mcp_server.py` | 03-app에서 이관 (check_reservation, create_reservation, estimate_cost) |
 | `02-agent/pyproject.toml` | mcp>=1.24.0 의존성 추가 |
-| `02-agent/agentcore.json` | Web Search Gateway (dining-web-search) 추가 |
+| `02-agent/agentcore.json` | Memory/Gateway CDK 관리 제거 (별도 CLI로 관리) |
 | `04-pipeline/eval_gate.py` | MCP 케이스(예약/비용) 추가 + MCP 클라이언트 연결 |
-| `05-sam/chat_function/app.py` | session_id, actor_id, conversation_context 전달 + tool_calls 반환, 하드코딩 제거 |
-| `05-sam/template.yaml` | RUNTIME_ARN을 Parameter로 변경 (하드코딩 제거) |
-| `06-frontend/src/App.js` | 다중 세션(localStorage), 도구 호출 로그, Memory 현황, 식당 카드 UI 추가 |
+| `05-sam/chat_function/app.py` | Memory 취향 조회 → prompt 주입, /memory GET 엔드포인트, session_id/actor_id/tool_calls 반환 |
+| `05-sam/template.yaml` | RUNTIME_ARN/MEMORY_ID Parameter 추가, /memory 라우트, RetrieveMemoryRecords 권한 |
+| `06-frontend/src/App.js` | 다중 세션(localStorage), 도구 호출 로그, Memory 현황(추출된 취향/사실), 식당 카드, Memory 새로고침 |
 | `03-app/app.py` | .env 기반으로 변경, memoryRecordSummaries 키 수정, 다중 세션, 중복 저장 방지, 대화 컨텍스트 주입 |
 | `03-app/.env.example` | 환경변수 템플릿 파일 신규 생성 |
 | `03-app/requirements.txt` | python-dotenv 추가 |
-| `.github/workflows/agent.yml` | 배포 후 RUNTIME_ARN/MEMORY_ID/GATEWAY_URL을 SSM에 저장 |
-| `.github/workflows/api.yml` | SSM에서 RUNTIME_ARN 읽어서 SAM 배포 시 주입, API_URL SSM 저장 |
+| `.github/workflows/agent.yml` | Memory/Gateway CLI 자동 생성(멱등), 배포 후 ARN/ID를 AWS CLI로 정확히 추출하여 SSM 저장 |
+| `.github/workflows/api.yml` | SSM에서 RUNTIME_ARN/MEMORY_ID 읽어서 SAM 배포 시 주입, API_URL SSM 저장 |
 | `.github/workflows/frontend.yml` | SSM에서 API_URL 읽어서 빌드 시 주입 |
 | `setup.sh` | sed 방식 제거 → SSM 저장 + .env 생성으로 교체 |
 | `.gitignore` | .env 추가 |
-| `TROUBLESHOOTING.md` | Memory API 응답 키 변경 이슈 (memoryRecords→memoryRecordSummaries) 추가 |
+| `TROUBLESHOOTING.md` | Memory API 응답 키 변경 이슈, runtimeSessionId 33자 이슈, RUNTIME_ARN 잘림 이슈 추가 |
+
+### 주요 버그 수정 (2026-08-05)
+
+| 이슈 | 원인 | 해결 |
+|------|------|------|
+| 응답 생성 못함 | `runtimeSessionId` 최소 33자 미충족 | Frontend generateSessionId() + Lambda 패딩 처리 |
+| 응답 생성 못함 | SSM 저장 시 RUNTIME_ARN 문자열 잘림 | grep 파싱 → AWS CLI 직접 조회로 변경 |
+| Memory 취향 반영 안 됨 | Lambda에 MEMORY_ID 없음 + Memory 조회 로직 없음 | Lambda에 Memory 조회 추가, 환경변수 주입 |
+| Memory retrieve 0건 | API 응답 키 `memoryRecords` → `memoryRecordSummaries` 변경 | 전체 코드 키 수정 |
+| CDK 배포 실패 | agentcore.json의 Memory/Gateway CDK 관리 충돌 | CDK에서 제거, CLI로 별도 관리 |
 
 ### 다음 단계
 

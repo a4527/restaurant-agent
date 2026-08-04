@@ -331,9 +331,13 @@ git push origin main
 | 상태 | 이슈 | 현황 / 우회 |
 |------|------|-------------|
 | ✅ | Memory `memoryRecords` → `memoryRecordSummaries` | API 응답 키 변경으로 항상 0건 반환되던 문제 수정 완료 |
+| ✅ | `runtimeSessionId` 최소 33자 요구사항 | Frontend + Lambda 패딩 처리로 해결 |
+| ✅ | RUNTIME_ARN SSM 저장 시 문자열 잘림 | AWS CLI 직접 조회로 변경하여 해결 |
+| ✅ | CDK 배포 시 Memory/Gateway 충돌 | agentcore.json에서 제거, CLI로 별도 관리 |
 | 🟡 | Gateway 보안 | 현재 `authorizer-type: NONE`. 프로덕션 전환 시 `AWS_IAM`으로 변경 필요 |
 | 🟡 | `<thinking>` 태그 노출 | Runtime 응답에 추론 과정 포함됨. Lambda 및 app.py에서 필터링 처리 중 |
 | 🟡 | MCP 예약 데이터 휘발 | mcp_server.py의 예약 데이터는 메모리 기반 → Runtime 재시작 시 초기화됨 (데모용) |
+| 🟡 | Web Search | 워크샵 계정에서 web-search 커넥터 미지원. Gateway 없이 동작 |
 
 ---
 
