@@ -99,30 +99,18 @@ def get_memory_status(actor_id: str) -> dict:
     # 2. 인덱싱된 long-term memory 조회 (retrieve_memory_records)
     for ns_type in ["preferences", "facts"]:
         ns = f"/users/{actor_id}/{ns_type}"
+        seen_ids = set()
+        # namespace 직접 지정으로만 조회
         try:
             resp = client.retrieve_memory_records(
                 memoryId=MEMORY_ID,
-                namespacePath=f"/users/{actor_id}/",
+                namespace=ns,
                 searchCriteria={"searchQuery": "취향 선호 사실 정보", "topK": 20}
             )
             for r in resp.get("memoryRecordSummaries", []):
-                record_ns = r.get("namespaces", [])
-                if ns_type in str(record_ns):
-                    result[f"indexed_{ns_type}"].append(r)
-        except Exception:
-            pass
-        # namespace 직접 지정도 시도
-        try:
-            resp = client.list_memory_records(memoryId=MEMORY_ID, namespace=ns)
-            for r in resp.get("memoryRecordSummaries", []):
-                if r not in result[f"indexed_{ns_type}"]:
-                    result[f"indexed_{ns_type}"].append(r)
-        except Exception:
-            pass
-        try:
-            resp = client.list_memory_records(memoryId=MEMORY_ID, namespace=f"{ns}/")
-            for r in resp.get("memoryRecordSummaries", []):
-                if r not in result[f"indexed_{ns_type}"]:
+                rid = r.get("memoryRecordId", "")
+                if rid and rid not in seen_ids:
+                    seen_ids.add(rid)
                     result[f"indexed_{ns_type}"].append(r)
         except Exception:
             pass
@@ -135,8 +123,7 @@ def search_memory(actor_id: str, query: str) -> list:
     client = boto3.client("bedrock-agentcore", region_name=REGION)
     results = []
 
-    for ns in [f"/users/{actor_id}/preferences", f"/users/{actor_id}/facts",
-               f"/users/{actor_id}/preferences/", f"/users/{actor_id}/facts/"]:
+    for ns in [f"/users/{actor_id}/preferences", f"/users/{actor_id}/facts"]:
         try:
             resp = client.retrieve_memory_records(
                 memoryId=MEMORY_ID,
