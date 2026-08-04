@@ -210,3 +210,37 @@ jobs:
           [ -n "$GATEWAY_URL" ] && aws ssm put-parameter --name "/dining/GATEWAY_URL" \
             --value "$GATEWAY_URL" --type String --overwrite --region "$REGION" \
             && echo "✅ SSM /dining/GATEWAY_URL"
+
+      - name: Update Runtime environment variables
+        env:
+          REGION: ${{ env.AWS_REGION }}
+        run: |
+          RUNTIME_ARN=$(aws ssm get-parameter --name "/dining/RUNTIME_ARN" \
+            --query "Parameter.Value" --output text --region "$REGION" 2>/dev/null || echo "")
+          MEMORY_ID=$(aws ssm get-parameter --name "/dining/MEMORY_ID" \
+            --query "Parameter.Value" --output text --region "$REGION" 2>/dev/null || echo "")
+          GATEWAY_URL=$(aws ssm get-parameter --name "/dining/GATEWAY_URL" \
+            --query "Parameter.Value" --output text --region "$REGION" 2>/dev/null || echo "")
+
+          if [ -z "$RUNTIME_ARN" ] || [ "$RUNTIME_ARN" = "None" ]; then
+            echo "⚠️  RUNTIME_ARN 없음 — 환경변수 업데이트 건너뜀"
+            exit 0
+          fi
+
+          RUNTIME_ID=$(echo "$RUNTIME_ARN" | sed 's|.*/||')
+          echo "Runtime ID: $RUNTIME_ID"
+
+          # 현재 환경변수 조회
+          CURRENT=$(aws bedrock-agentcore-control get-agent-runtime \
+            --agent-runtime-id "$RUNTIME_ID" \
+            --region "$REGION" \
+            --query "agentRuntime.agentRuntimeArtifact" \
+            --output json 2>/dev/null || echo "{}")
+          echo "현재 설정: $CURRENT"
+
+          # MEMORY_ID, GATEWAY_WEB_SEARCH_URL 환경변수 업데이트
+          aws bedrock-agentcore-control update-agent-runtime \
+            --agent-runtime-id "$RUNTIME_ID" \
+            --environment-variables "{\"MEMORY_ID\":\"$MEMORY_ID\",\"GATEWAY_WEB_SEARCH_URL\":\"$GATEWAY_URL\"}" \
+            --region "$REGION" 2>&1 && echo "✅ Runtime 환경변수 업데이트 완료" || \
+          echo "⚠️  Runtime 환경변수 업데이트 실패 (API 미지원일 수 있음 — 계속 진행)"

@@ -24,21 +24,7 @@
   "evaluators": [],
   "onlineEvalConfigs": [],
   "agentCoreGateways": [],
-  "unassignedTargets": [
-    {
-      "name": "web-search",
-      "targetType": "connector",
-      "connectorId": "web-search",
-      "configurations": [
-        {
-          "name": "WebSearch",
-          "description": "",
-          "parameterValues": {},
-          "parameterOverrides": []
-        }
-      ]
-    }
-  ],
+  "unassignedTargets": [],
   "policyEngines": [],
   "configBundles": [],
   "abTests": [],

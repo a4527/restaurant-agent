@@ -33,6 +33,24 @@ MEMORY_ID = os.environ.get("MEMORY_ID", "")
 REGION = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
 GATEWAY_WEB_SEARCH_URL = os.environ.get("GATEWAY_WEB_SEARCH_URL", "")
 
+
+def _get_ssm_value(name: str) -> str:
+    """환경변수 없을 때 SSM에서 읽기"""
+    try:
+        import boto3
+        ssm = boto3.client("ssm", region_name=REGION)
+        resp = ssm.get_parameter(Name=name)
+        return resp["Parameter"]["Value"]
+    except Exception:
+        return ""
+
+
+# 환경변수 없으면 SSM에서 읽기
+if not MEMORY_ID:
+    MEMORY_ID = _get_ssm_value("/dining/MEMORY_ID")
+if not GATEWAY_WEB_SEARCH_URL:
+    GATEWAY_WEB_SEARCH_URL = _get_ssm_value("/dining/GATEWAY_URL")
+
 # ── MCP 서버 파라미터 ─────────────────────────────────
 MCP_SERVER_PARAMS = StdioServerParameters(
     command=sys.executable,
@@ -48,7 +66,7 @@ SYSTEM_PROMPT = """당신은 강남 지역 식당 추천 전문 도우미 "다�
 3. check_reservation: 식당의 예약 가능 여부를 확인합니다
 4. create_reservation: 식당 예약을 생성합니다
 5. estimate_cost: 식사 비용을 산정합니다
-6. WebSearch: 실시간 웹 검색으로 최신 정보를 조회합니다 (이벤트, 날씨, 최신 소식 등)
+6. WebSearch: 실시간 웹 검색으로 최신 정보를 조회합니다
 
 중요 규칙:
 - 식당 추천 시 반드시 search_restaurants를 호출하세요.
@@ -56,6 +74,7 @@ SYSTEM_PROMPT = """당신은 강남 지역 식당 추천 전문 도우미 "다�
 - 예약 가능 여부 질문 시 반드시 check_reservation을 호출하세요.
 - 예약 요청 시 반드시 create_reservation을 호출하세요.
 - 비용/가격 산정 시 반드시 estimate_cost를 호출하세요.
+- 날씨, 현재 기온, 실시간 이벤트, 최신 뉴스, 오늘/지금 관련 질문은 반드시 WebSearch를 호출하세요.
 - 날짜가 "내일"이면 오늘 날짜 + 1일, "오늘"이면 오늘 날짜로 해석하세요.
 - 시간이 "저녁"이면 19:00, "점심"이면 12:00으로 해석하세요.
 - 인원이 명시되지 않으면 2명으로 가정하세요.
