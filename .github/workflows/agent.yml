@@ -70,10 +70,13 @@ jobs:
         env:
           REGION: ${{ env.AWS_REGION }}
         run: |
-          MEMORIES=$(aws bedrock-agentcore-control list-memories --region "$REGION" --output json 2>/dev/null || echo '{"memories":[]}')
-          MEMORY_ID=$(echo "$MEMORIES" | python3 .github/scripts/find_memory.py)
+          # SSM에 저장된 MEMORY_ID 확인
+          MEMORY_ID=$(aws ssm get-parameter \
+            --name "/dining/MEMORY_ID" \
+            --query "Parameter.Value" --output text \
+            --region "$REGION" 2>/dev/null || echo "")
 
-          if [ -z "$MEMORY_ID" ]; then
+          if [ -z "$MEMORY_ID" ] || [ "$MEMORY_ID" = "None" ]; then
             echo "Memory 없음 → 새로 생성"
             RESULT=$(aws bedrock-agentcore-control create-memory \
               --name "DiningConcierge_dining_memory" \
@@ -83,6 +86,7 @@ jobs:
             echo "$RESULT"
             MEMORY_ID=$(echo "$RESULT" | python3 .github/scripts/parse_memory_id.py)
             echo "생성된 Memory ID: $MEMORY_ID"
+
             echo "ACTIVE 대기 중..."
             for i in $(seq 1 20); do
               STATUS=$(aws bedrock-agentcore-control get-memory \
@@ -92,6 +96,11 @@ jobs:
               [ "$STATUS" = "ACTIVE" ] && echo "✅ Memory ACTIVE" && break
               sleep 15
             done
+
+            # SSM에 저장
+            aws ssm put-parameter --name "/dining/MEMORY_ID" \
+              --value "$MEMORY_ID" --type String --overwrite \
+              --region "$REGION" && echo "✅ SSM /dining/MEMORY_ID 저장"
           else
             echo "✅ 기존 Memory 재사용: $MEMORY_ID"
           fi
