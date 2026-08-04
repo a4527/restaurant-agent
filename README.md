@@ -1,51 +1,87 @@
 # DiningConcierge — 강남 식당 추천 AI 에이전트
 
-> AWS Bedrock AgentCore 기반 풀스택 AI 에이전트 프로젝트  
-> 새 AWS 계정에서 처음부터 끝까지 재현 가능한 올인원 프로젝트
+> AWS Bedrock AgentCore 기반 풀스택 AI 에이전트  
+> 새 AWS 계정에서 `./setup.sh --all` 한 번으로 전체 인프라 + 앱 재현 가능
 
 ---
 
 ## 프로젝트 개요
 
-강남 지역 식당 8곳의 정보를 Bedrock Knowledge Base(RAG)에 저장하고,  
-Strands Agents SDK 기반 에이전트가 도구 호출(검색/메뉴/예약/비용산정)로 추천하는 풀스택 AI 앱.
+강남 지역 식당 8곳의 정보를 Bedrock Knowledge Base(RAG)에 저장하고, Strands Agents SDK 기반 에이전트가 도구 호출(검색·메뉴·예약·비용산정)을 통해 맞춤 추천하는 풀스택 AI 애플리케이션입니다.
 
-**핵심 구성 요소:**
-- Bedrock Knowledge Base (OpenSearch Serverless + Titan Embed v2)
-- Strands Agents SDK + MCP 서버 (예약/비용 도구)
-- AgentCore Runtime (CDK 배포)
-- Streamlit 앱 (로컬 테스트용)
-- SAM Lambda API (서버리스 백엔드)
-- React + Cloudscape 프론트엔드
-- CloudFront + S3 정적 호스팅
-- GitHub Actions CI/CD (경로별 자동 배포 + Strands Evals 평가 게이트)
+**핵심 특징:**
+- 자연어 질문 → AI가 자동으로 적절한 도구를 선택하여 답변
+- 벡터 검색 기반 식당 추천 (분위기, 가격대, 메뉴 유형별)
+- MCP 프로토콜로 예약·비용 산정 도구 연동
+- 사용자 취향 기억 (AgentCore Memory)
+- 실시간 웹 검색으로 최신 정보 보완
+- 무중단 배포 + 품질 게이트 기반 CI/CD
 
 ---
 
 ## 아키텍처
 
 ```
-사용자 (브라우저)
-  ↓
-CloudFront → S3 (React 정적 파일)   ← 06-frontend
-  ↓ POST /chat
-API Gateway → Lambda (SAM)           ← 05-sam
-  ├─ Strands Agent + search_restaurants 도구
-  └─ Bedrock KB retrieve (OpenSearch Serverless)
-      ↓
-  Bedrock Nova Lite → 응답 생성
-
-[AgentCore Runtime 경로 — Streamlit 앱에서 사용]
-Streamlit (03-app/app.py)
-  ├─ Web Search Gateway (us-east-1) 직접 호출
-  ├─ Memory (get_memory_record) → 취향 컨텍스트 주입
-  ↓
-AgentCore Runtime (us-west-2)        ← 02-agent
-  ├─ tools.py → Bedrock KB retrieve  ← 01-kb
-  ├─ mcp_server.py (stdio) → 예약/비용 도구
-  ↓
-Bedrock Nova Lite → 응답 생성
+┌─────────────────────────────────────────────────────────────────────┐
+│  사용자 (브라우저)                                                    │
+└──────────────┬──────────────────────────────────────────────────────┘
+               ▼
+┌──────────────────────────┐
+│  CloudFront (CDN)        │ ← 06-frontend
+│  └─ S3 (React 정적 파일) │
+└──────────────┬───────────┘
+               │ POST /chat
+               ▼
+┌──────────────────────────┐
+│  API Gateway → Lambda    │ ← 05-sam
+│  (경량 프록시, 256MB)     │
+│  boto3 invoke만 수행      │
+└──────────────┬───────────┘
+               │ invoke_agent_runtime()
+               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  AgentCore Runtime (풀기능 에이전트)                     ← 02-agent │
+│                                                                    │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  Strands Agent (도구 자동 선택)                               │  │
+│  │                                                               │  │
+│  │  ├─ search_restaurants → Bedrock KB (벡터 검색)    ← 01-kb   │  │
+│  │  ├─ get_menu → Bedrock KB (식당명 필터)                       │  │
+│  │  ├─ MCP Server (stdio) → 예약 / 비용 산정 도구              │  │
+│  │  ├─ Web Search Gateway (us-east-1) → 실시간 웹 검색          │  │
+│  │  └─ Memory → 사용자 취향 저장/검색                            │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                              │                                      │
+│                              ▼                                      │
+│                    Bedrock Nova Lite → 응답 생성                    │
+└──────────────────────────────────────────────────────────────────┘
 ```
+
+### 요청 흐름
+
+1. 사용자가 React 채팅 UI에서 메시지 입력
+2. `POST /chat` → API Gateway → Lambda (프록시)
+3. Lambda가 `invoke_agent_runtime()`으로 AgentCore Runtime 호출
+4. Runtime 내 Strands Agent가 질문을 분석하여 **도구 자동 선택**:
+   - 식당 검색 → KB 벡터 검색 (분위기·가격대·유형)
+   - 메뉴 조회 → KB 검색 (식당명 필터)
+   - 예약 → MCP 서버 호출
+   - 비용 산정 → MCP 서버 호출
+   - 실시간 정보 → Web Search Gateway
+   - 취향 기억 → Memory 저장/검색
+5. Agent가 도구 결과를 종합하여 Nova Lite로 자연어 응답 생성
+6. 스트리밍 응답 → Lambda 조합 → JSON 반환 → 프론트엔드 렌더링
+
+### 계층별 역할 분리
+
+| 계층 | 역할 | 특징 |
+|------|------|------|
+| CloudFront + S3 | 정적 파일 서빙 | OAC로 S3 직접 접근 차단 |
+| Lambda | Runtime 프록시 | 에이전트 로직 없음, boto3만 사용 (경량) |
+| AgentCore Runtime | 전체 에이전트 로직 | KB·MCP·Memory·WebSearch 통합 |
+| Bedrock KB | 벡터 검색 (RAG) | OpenSearch Serverless + Titan Embed v2 |
+
+> **설계 철학**: Lambda는 순수 프록시로 유지하여 에이전트 로직 변경 시 Lambda 재배포가 불필요합니다. 에이전트 코드는 AgentCore Runtime에만 존재하며 독립 배포됩니다.
 
 ---
 
@@ -53,65 +89,57 @@ Bedrock Nova Lite → 응답 생성
 
 ```
 restaurant-project/
-├── README.md                 ← 이 파일 (통합 가이드)
-├── setup.sh                  ← 전체 자동 재현 스크립트
-├── progress-notes.md         ← 프로젝트 진행 기록
-├── 00-infra.yaml             ← CloudFormation (S3 2개 + IAM 2개)
+├── README.md                 ← 이 파일
+├── MANUAL-SETUP.md           ← 트러블슈팅 참조
+├── TROUBLESHOOTING.md        ← 문제 해결 가이드
+├── setup.sh                  ← 전체 자동 재현 스크립트 (멱등)
+├── progress-notes.md         ← 개발 진행 기록
+│
+├── 00-infra.yaml             ← CloudFormation (S3 ×2 + IAM ×2)
+│
 ├── 01-kb/                    ← Knowledge Base
-│   ├── setup-kb.sh           ← KB 생성 스크립트
-│   └── data/                 ← 식당 데이터 (docx 8개 + metadata + xlsx)
+│   ├── setup-kb.sh           ← KB 자동 생성 (OpenSearch → 인덱스 → KB → 동기화)
+│   └── data/                 ← 식당 데이터 (docx 8개 + metadata)
+│
 ├── 02-agent/                 ← AgentCore Runtime
 │   ├── deploy.sh             ← 배포 스크립트
-│   ├── agentcore/            ← AgentCore 설정 + CDK
-│   │   ├── agentcore.json
-│   │   └── cdk/
-│   └── app/DiningConcierge/  ← Runtime 앱 코드
-│       ├── main.py
-│       ├── tools.py
-│       ├── pyproject.toml
-│       └── model/
-├── 03-app/                   ← Streamlit 프로덕션 앱
-│   ├── run.sh
-│   ├── app.py                ← 채팅 UI + Memory + Web Search
-│   ├── agent.py              ← 로컬 Agent 통합
-│   ├── tools.py              ← KB 검색 도구
-│   ├── mcp_server.py         ← MCP 예약/비용 도구
-│   └── requirements.txt
-├── .github/workflows/        ← GitHub Actions CI/CD
-│   ├── agent.yml             ← 02-agent/** 변경 → 평가 + AgentCore deploy
-│   ├── api.yml               ← 05-sam/** 변경 → SAM deploy
-│   └── frontend.yml          ← 06-frontend/** 변경 → S3 + CloudFront
-├── 04-pipeline/              ← CI/CD 관련 스크립트
-│   └── eval_gate.py          ← Strands Evals 평가 스크립트
+│   ├── agentcore/            ← agentcore.json + CDK 설정
+│   └── app/DiningConcierge/  ← 에이전트 코드
+│       ├── main.py           ← 엔트리포인트 (Strands Agent)
+│       ├── tools.py          ← KB 검색 도구
+│       └── mcp_server.py     ← MCP 예약/비용 도구
+│
+├── 03-app/                   ← Streamlit 로컬 테스트 (선택)
+│
+├── 04-pipeline/              ← 평가 게이트
+│   └── eval_gate.py          ← Strands Evals (3케이스, ≥0.7 PASS)
+│
 ├── 05-sam/                   ← SAM 서버리스 API
 │   ├── template.yaml         ← Lambda + API Gateway
-│   ├── samconfig.toml
-│   └── chat_function/
-│       ├── app.py            ← Lambda 핸들러
-│       └── requirements.txt
-└── 06-frontend/              ← React 프론트엔드
-    ├── package.json
-    ├── cloudfront-url.txt
-    ├── src/
-    │   ├── App.js            ← Cloudscape 채팅 UI
-    │   └── index.js
-    └── public/
-        └── index.html
+│   └── chat_function/app.py  ← invoke_agent_runtime() 프록시
+│
+├── 06-frontend/              ← React 프론트엔드
+│   ├── package.json          ← React 18 + Cloudscape
+│   └── src/App.js            ← 채팅 UI
+│
+└── .github/workflows/        ← CI/CD
+    ├── agent.yml             ← 에이전트 평가 + 배포
+    ├── api.yml               ← SAM 배포
+    └── frontend.yml          ← 프론트엔드 배포
 ```
 
 ---
 
-## 사전 요구사항
+## 빠른 시작
+
+### 사전 요구사항
 
 ```bash
-# AWS CLI 설정 (리전: us-west-2)
+# AWS CLI (리전: us-west-2)
 aws configure  # region: us-west-2
 
-# Node.js 20+
-node --version  # v20.x
-
-# Python 3.12+
-python3 --version  # 3.12.x
+# Node.js 20+, Python 3.12+
+node --version && python3 --version
 
 # AgentCore CLI
 npm install -g @aws/agentcore
@@ -119,209 +147,179 @@ npm install -g @aws/agentcore
 # SAM CLI
 pip install aws-sam-cli
 
-# Bedrock 모델 접근 활성화 (콘솔에서)
+# Bedrock 모델 접근 활성화 (AWS 콘솔)
 # → Amazon Nova Lite (us.amazon.nova-lite-v1:0)
 # → Amazon Titan Text Embeddings V2 (amazon.titan-embed-text-v2:0)
 ```
 
----
-
-## 빠른 시작 (전체 자동 배포)
+### 전체 자동 배포 (원커맨드)
 
 ```bash
 cd restaurant-project
-./setup.sh
+./setup.sh --all
+```
+
+완료 후 `06-frontend/cloudfront-url.txt`에 접속 URL이 저장됩니다.
+
+> **멱등성 보장**: 여러 번 실행해도 안전합니다. 기존 리소스는 재사용하고 없는 것만 생성합니다.
+
+### setup.sh 단계별 동작
+
+| 단계 | 옵션 | 수행 내용 |
+|------|------|-----------|
+| STEP 0 | `--infra` | CloudFormation 배포 — S3 버킷 2개 + IAM 역할 2개 |
+| STEP 1 | `--kb` | OpenSearch 컬렉션 + 벡터 인덱스(1024dim) + KB 생성 + 데이터 동기화 |
+| STEP 2 | `--agent` | Memory + Gateway 생성 + AgentCore CDK 배포 + ARN/ID 자동 반영 |
+| STEP 3 | `--app` | Streamlit venv 구성 (로컬 테스트 전용, 선택) |
+| STEP 4 | `--sam` | SAM build + deploy (RUNTIME_ARN 자동 주입) |
+| STEP 5 | `--frontend` | npm build + S3 업로드 + OAC + CloudFront 생성 |
+| STEP 6 | `--pipeline` | GitHub Actions 설정 안내 |
+
+- `./setup.sh` (인자 없음): STEP 0~3만 실행 (로컬 개발 환경)
+- `./setup.sh --all`: STEP 0~6 전체 실행 (프로덕션 배포)
+
+> **수동 설정 불필요**: 모든 ID, ARN, URL이 단계 간 자동 반영됩니다.
+
+---
+
+## 배포 전략 (무중단)
+
+모든 계층이 blue-green 방식으로 동작하여 **배포 중에도 서비스가 정상 유지**됩니다.
+
+| 계층 | 배포 방식 | 다운타임 |
+|------|-----------|----------|
+| AgentCore Runtime | 새 버전 준비 완료(READY) → 트래픽 전환 | 없음 |
+| Lambda (SAM) | 새 코드 업로드 → 다음 호출부터 적용 | 없음 |
+| CloudFront + S3 | 새 파일 업로드 → 캐시 무효화 | 없음 |
+
+### 독립 배포의 장점
+
+```
+에이전트 프롬프트 수정 → 02-agent만 배포 (Lambda·프론트 영향 없음)
+API 로직 변경 → 05-sam만 배포 (에이전트·프론트 영향 없음)
+UI 수정 → 06-frontend만 배포 (백엔드 영향 없음)
 ```
 
 ---
 
-## 단계별 수동 실행
+## CI/CD (GitHub Actions)
 
-### STEP 0: 인프라 배포 (CloudFormation)
+코드를 push하면 **변경된 경로에 해당하는 워크플로우만** 자동 실행됩니다.
 
-S3 버킷 2개 + IAM 역할 2개를 한 번에 배포합니다.
+### 워크플로우 구성
 
-```bash
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
-aws cloudformation deploy \
-  --template-file 00-infra.yaml \
-  --stack-name dining-infra \
-  --parameter-overrides AccountId=$ACCOUNT_ID \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region us-west-2
-```
-
-생성되는 리소스:
-- `dining-kb-data-{AccountId}` — KB 데이터 소스 (Versioned)
-- `dining-frontend-{AccountId}` — Frontend 정적 호스팅
-- `dining-kb-role` — Bedrock KB S3/Embed/OpenSearch 접근
-- `dining-gateway-role` — AgentCore Web Search Gateway
-
----
-
-### STEP 1: Knowledge Base 생성
-
-```bash
-cd 01-kb && bash setup-kb.sh
-```
-
-스크립트 동작:
-1. S3에 식당 데이터(docx 8개 + metadata JSON) 업로드
-2. Bedrock KB 생성 (OpenSearch Serverless + Titan Embed v2, 1024차원)
-3. Data Source 추가 및 동기화 시작
-
-완료 후 `kb-id.txt`에 KB ID 저장됨.
-
----
-
-### STEP 2: AgentCore Runtime 배포
-
-```bash
-cd 02-agent && bash deploy.sh
-```
-
-스크립트 동작:
-1. KB ID 자동 읽어서 tools.py 업데이트
-2. CDK 의존성 설치 (npm ci + build)
-3. `npx @aws/agentcore deploy --yes`
-
-배포 후 `npx @aws/agentcore status`로 Runtime ID 확인.
-
----
-
-### STEP 3: Streamlit 앱 (로컬 테스트)
-
-```bash
-cd 03-app && bash run.sh
-```
-
-**`setup.sh`가 자동으로 설정합니다:**
-- `app.py`의 `RUNTIME_ARN` ← Step 2 완료 후 자동 반영
-- `tools.py`의 `KB_ID` ← Step 1 완료 후 자동 반영
-
-기능:
-- AgentCore Runtime 호출 (검색/메뉴/예약/비용 도구)
-- Web Search Gateway 직접 호출 (us-east-1)
-- Memory 연동 (취향 저장/검색)
-- 도구 호출 로그 사이드바
-- 식당 상세 카드 UI
-
----
-
-### STEP 4: SAM API 배포 (서버리스 백엔드)
-
-```bash
-cd 05-sam
-pip install aws-sam-cli  # 설치 안 된 경우
-sam build
-sam deploy --guided  # 또는 sam deploy (samconfig.toml 사용)
-```
-
-배포 결과: API Gateway endpoint URL 출력됨 (예: `https://xxxx.execute-api.us-west-2.amazonaws.com/Prod`)
-
----
-
-### STEP 5: React 프론트엔드 빌드 & 배포
-
-```bash
-cd 06-frontend
-npm install
-REACT_APP_API_URL=https://YOUR_API_GATEWAY_URL/Prod npm run build
-```
-
-S3 + CloudFront 배포 (`setup.sh --frontend`가 자동으로 수행):
-1. S3에 빌드 파일 업로드
-2. OAC 생성 (최초 1회)
-3. CloudFront Distribution 생성 (SPA 에러 페이지 포함)
-4. S3 버킷 정책 설정 (CloudFront에서만 접근)
-5. `cloudfront-url.txt`에 URL 저장
-
-수동 실행 시:
-```bash
-./setup.sh --frontend
-```
-
----
-
-### STEP 6: CI/CD (GitHub Actions)
-
-GitHub에 push하면 변경된 경로에 따라 자동으로 해당 부분만 배포됩니다.
-
-| 워크플로우 | 트리거 경로 | 동작 |
-|-----------|------------|------|
-| `agent.yml` | `02-agent/**` | Strands Evals 평가 → AgentCore deploy |
+| 파일 | 트리거 경로 | 파이프라인 |
+|------|------------|-----------|
+| `agent.yml` | `02-agent/**`, `04-pipeline/**` | Strands Evals 평가 → (≥0.7 PASS) → CDK bootstrap → AgentCore deploy |
 | `api.yml` | `05-sam/**` | SAM build → SAM deploy |
 | `frontend.yml` | `06-frontend/**` | npm build → S3 sync → CloudFront 무효화 |
 
-**사전 설정 (GitHub repo):**
-1. Settings → Secrets and variables → Actions
-2. 아래 Secrets 등록:
-   - `AWS_ACCESS_KEY_ID`
-   - `AWS_SECRET_ACCESS_KEY`
+### 평가 게이트 (Strands Evals)
+
+에이전트 코드 변경 시 **품질 검증을 통과해야만 배포**됩니다.
+
+| 테스트 케이스 | 검증 내용 |
+|--------------|-----------|
+| 이탈리안 추천 | `search_restaurants` 호출 + "트라토리아" 포함 |
+| 메뉴 조회 | `get_menu` 호출 + "갈비" 포함 |
+| 조용한 일식당 | `search_restaurants` 호출 + "오마카세" 포함 |
+
+- 3개 케이스 평균 점수 **≥ 0.7**: PASS → 배포 진행
+- 3개 케이스 평균 점수 **< 0.7**: FAIL → 배포 차단 (프로덕션 보호)
+
+### GitHub Secrets 설정
+
+```
+Settings → Secrets and variables → Actions에 등록:
+
+- AWS_ACCESS_KEY_ID
+- AWS_SECRET_ACCESS_KEY
+- AWS_SESSION_TOKEN        ← 워크샵/임시 자격증명 사용 시 필수
+```
+
+### 사용 예시
 
 ```bash
-# 예: 에이전트 코드 수정 후
+# 에이전트 시스템 프롬프트 수정
 git add 02-agent/
-git commit -m "에이전트 시스템 프롬프트 수정"
+git commit -m "에이전트: 추천 톤 변경"
 git push origin main
-# → agent.yml 워크플로우만 자동 실행 (평가 통과 시 배포)
+# → agent.yml만 실행: 평가 통과 시에만 배포
+
+# 프론트엔드 UI 수정
+git add 06-frontend/
+git commit -m "채팅 UI 스타일 개선"
+git push origin main
+# → frontend.yml만 실행: 빌드 → S3 → CloudFront 무효화
 ```
 
 ---
 
-## 완료된 작업
+## 기술 스택
 
-| 단계 | 내용 | 상태 |
+| 분류 | 기술 |
+|------|------|
+| LLM | Amazon Nova Lite (`us.amazon.nova-lite-v1:0`) |
+| 임베딩 | Amazon Titan Embed V2 (1024차원) |
+| 벡터 DB | OpenSearch Serverless (VECTORSEARCH) |
+| RAG | Bedrock Knowledge Base |
+| 에이전트 프레임워크 | Strands Agents SDK |
+| 도구 프로토콜 | MCP (Model Context Protocol, stdio) |
+| 에이전트 런타임 | Bedrock AgentCore Runtime |
+| 메모리 | AgentCore Memory (USER_PREFERENCE + SEMANTIC) |
+| 웹 검색 | AgentCore Web Search Gateway (us-east-1) |
+| 백엔드 | Lambda Python 3.12 + API Gateway (SAM) |
+| 프론트엔드 | React 18 + Cloudscape Design System |
+| 호스팅 | CloudFront + S3 (OAC) |
+| CI/CD | GitHub Actions (경로 필터 + 평가 게이트) |
+| IaC | CloudFormation + AgentCore CDK + SAM |
+
+---
+
+## 현재 상태 & 로드맵
+
+### 현재 배포 상태
+
+| 환경 | 기능 | 상태 |
 |------|------|------|
-| STEP 1~5 | KB 생성, 데이터 업로드/동기화 | ✅ |
-| STEP 6~20 | Strands Agent 개발 + AgentCore Runtime 배포 | ✅ |
-| STEP 21 | MCP 서버 (예약/비용 3개 도구) | ✅ |
-| STEP 22 | AgentCore Memory 연동 | ✅ (인덱싱 지연 이슈 존재) |
-| STEP 23 | 코드 리팩토링 + 프로덕션 보강 | ✅ |
-| STEP 24 | Web Search Gateway 연동 (us-east-1) | ✅ |
-| STEP 25 | CI/CD — GitHub Actions (경로별 자동 배포) | ✅ |
-| SAM API | Lambda + API Gateway | ✅ |
-| Frontend | React + Cloudscape 채팅 UI | ✅ |
-| CloudFront | S3 정적 호스팅 | ✅ |
+| **프로덕션** (CloudFront → Lambda → Runtime) | KB 검색 + MCP(예약/비용) + Memory + Web Search 풀기능 | ✅ 배포 중 |
+| **로컬** (Streamlit, `03-app/`) | KB + MCP(예약/비용) + Memory + Web Search 풀기능 | ✅ 동작 |
+
+### 최근 주요 변경 (2026-08-05)
+
+- **Runtime 풀기능화**: `main.py`에 MCP(예약/비용), Memory, Web Search Gateway 통합
+- **프론트엔드 업그레이드**: 다중 세션 관리, 도구 호출 로그, Memory 현황, 식당 카드 UI
+- **Lambda 개선**: session_id/actor_id/conversation_context 전달, tool_calls 반환
+- **평가 게이트 확장**: 예약/비용 케이스 추가 (총 5케이스)
+- **setup.sh 개선**: Gateway/Memory ID를 main.py에도 자동 반영
+- **Memory 버그 수정**: API 응답 키 `memoryRecords` → `memoryRecordSummaries` 수정
+
+### 로드맵
+
+| 순서 | 작업 | 설명 |
+|------|------|------|
+| 1 | 프로덕션 풀기능 테스트 | CloudFront URL에서 예약/Memory/WebSearch 동작 확인 |
+| 2 | Memory 임계값 최적화 | `test_memory_threshold.py`로 중복 감지 임계값 조정 |
+| 3 | eval 임계값 최적화 | `test_eval_threshold.py`로 배포 기준점 검증 |
+| 4 | Gateway 보안 강화 | 현재 `authorizer-type: NONE` → `AWS_IAM`으로 전환 |
 
 ---
 
-## 미해결 이슈 & 남은 작업
+## 알려진 이슈
 
-### 🟡 Memory 인덱싱 안정화
-
-**현황**: batch_create_memory_records → get_memory_record 정상, RetrieveMemoryRecords 0건  
-**우회**: 직접 get_memory_record로 조회 후 prompt 주입 방식 사용 중  
-**확인**: 시간 경과 후 자동 해결 가능 (벡터 인덱싱 지연)
-
-### 🟡 Gateway 보안 강화
-
-**현재**: authorizer-type: NONE (인증 없이 접근)  
-**프로덕션**: AWS_IAM으로 전환 필요
+| 상태 | 이슈 | 현황 / 우회 |
+|------|------|-------------|
+| ✅ | Memory `memoryRecords` → `memoryRecordSummaries` | API 응답 키 변경으로 항상 0건 반환되던 문제 수정 완료 |
+| 🟡 | Gateway 보안 | 현재 `authorizer-type: NONE`. 프로덕션 전환 시 `AWS_IAM`으로 변경 필요 |
+| 🟡 | `<thinking>` 태그 노출 | Runtime 응답에 추론 과정 포함됨. Lambda 및 app.py에서 필터링 처리 중 |
+| 🟡 | MCP 예약 데이터 휘발 | mcp_server.py의 예약 데이터는 메모리 기반 → Runtime 재시작 시 초기화됨 (데모용) |
 
 ---
 
-## 리소스 정리 (Workshop 계정)
+## 참고사항
 
-| 리소스 | ID / 이름 | 리전 |
-|--------|-----------|------|
-| KB | RIFBMADYWG | us-west-2 |
-| Runtime | DiningConcierge_DiningConcierge-LEm0AP8Vi2 | us-west-2 |
-| Memory | DiningConcierge_dining_memory-R5zXit9OAR | us-west-2 |
-| Gateway | dining-web-search-gateway-fiahbr5mdx | us-east-1 |
-| S3 (KB data) | dining-kb-data-902777495046 | us-west-2 |
-| S3 (Frontend) | dining-frontend-902777495046 | us-west-2 |
-| CloudFront | d3t06p9k7ww2xw.cloudfront.net | Global |
-| SAM Stack | dining-sam-api | us-west-2 |
-
----
-
-## 주의사항
-
-- `03-app/tools.py`, `05-sam/chat_function/app.py`의 `KB_ID`는 `setup.sh`가 자동 반영
-- `03-app/app.py`의 `RUNTIME_ARN`은 `setup.sh`가 자동 반영
 - Web Search Gateway는 **us-east-1 전용** (cross-region 호출)
-- AgentCore Memory 인덱싱에 시간 소요 (10분~)
-- SAM deploy 시 `--guided` 옵션으로 최초 설정 후 `samconfig.toml`에 저장됨
-- Frontend의 `REACT_APP_API_URL`은 SAM 배포 후 자동 설정됨
+- AgentCore Memory 인덱싱에 최대 10분 소요
+- SAM 최초 배포 시 `--guided` 사용 → `samconfig.toml`에 설정 저장
+- 워크샵/임시 계정 사용 시 GitHub Secrets에 `AWS_SESSION_TOKEN` 등록 필요
+- 문제 발생 시 `TROUBLESHOOTING.md` 및 `MANUAL-SETUP.md` 참조
