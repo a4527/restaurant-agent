@@ -14,7 +14,7 @@ import streamlit as st
 import boto3
 
 # ── 설정 ──────────────────────────────────────────────
-RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-west-2:902777495046:runtime/DiningConcierge_DiningConcierge-LEm0AP8Vi2"
+RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-west-2:678498164624:runtime/DiningConcierge_DiningConcierge-aLEpSdHOiw"
 MEMORY_ID = "DiningConcierge_dining_memory-R5zXit9OAR"
 REGION = "us-west-2"
 GATEWAY_WEB_SEARCH_URL = "https://dining-web-search-gateway-fiahbr5mdx.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"

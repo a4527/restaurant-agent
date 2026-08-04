@@ -18,7 +18,26 @@
       "protocol": "HTTP"
     }
   ],
-  "memories": [],
+  "memories": [
+    {
+      "name": "dining_memory",
+      "eventExpiryDuration": 30,
+      "strategies": [
+        {
+          "type": "USER_PREFERENCE",
+          "namespaceTemplates": [
+            "/users/{actorId}/preferences"
+          ]
+        },
+        {
+          "type": "SEMANTIC",
+          "namespaceTemplates": [
+            "/users/{actorId}/facts"
+          ]
+        }
+      ]
+    }
+  ],
   "knowledgeBases": [],
   "credentials": [],
   "evaluators": [],
