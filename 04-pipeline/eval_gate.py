@@ -10,7 +10,7 @@ DiningConcierge 평가 스크립트 — Strands Evals
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "app", "DiningConcierge"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "02-agent", "app", "DiningConcierge"))
 
 from strands import Agent
 from strands.models.bedrock import BedrockModel
