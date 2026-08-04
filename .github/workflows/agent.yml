@@ -23,8 +23,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: |
-          pip install strands-agents strands-agents-evals boto3 mcp
+        run: pip install strands-agents strands-agents-evals boto3 mcp
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -68,46 +67,29 @@ jobs:
         run: curl -LsSf https://astral.sh/uv/install.sh | sh && echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Create Memory (if not exists)
+        env:
+          REGION: ${{ env.AWS_REGION }}
         run: |
-          # JMESPath && 대신 Python으로 필터링
-          MEMORY_ID=$(aws bedrock-agentcore-control list-memories \
-            --region ${{ env.AWS_REGION }} \
-            --output json 2>/dev/null | \
-            python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-memories = data.get('memories', [])
-active = [m['id'] for m in memories if 'dining' in m.get('name','').lower() and m.get('status') == 'ACTIVE']
-print(active[0] if active else '')
-" || echo "")
+          MEMORIES=$(aws bedrock-agentcore-control list-memories --region "$REGION" --output json 2>/dev/null || echo '{"memories":[]}')
+          MEMORY_ID=$(echo "$MEMORIES" | python3 .github/scripts/find_memory.py)
 
           if [ -z "$MEMORY_ID" ]; then
             echo "Memory 없음 → 새로 생성"
             RESULT=$(aws bedrock-agentcore-control create-memory \
               --name "DiningConcierge_dining_memory" \
               --event-expiry-duration 30 \
-              --memory-strategies '[
-                {"userPreferenceMemoryStrategy":{"name":"preferences","namespaceTemplates":["/users/{actorId}/preferences"]}},
-                {"semanticMemoryStrategy":{"name":"facts","namespaceTemplates":["/users/{actorId}/facts"]}}
-              ]' \
-              --region ${{ env.AWS_REGION }} 2>&1)
+              --memory-strategies '[{"userPreferenceMemoryStrategy":{"name":"preferences","namespaceTemplates":["/users/{actorId}/preferences"]}},{"semanticMemoryStrategy":{"name":"facts","namespaceTemplates":["/users/{actorId}/facts"]}}]' \
+              --region "$REGION" 2>&1)
             echo "$RESULT"
-
-            MEMORY_ID=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['memory']['id'])" 2>/dev/null || echo "")
+            MEMORY_ID=$(echo "$RESULT" | python3 .github/scripts/parse_memory_id.py)
             echo "생성된 Memory ID: $MEMORY_ID"
-
-            # ACTIVE 대기
-            echo "ACTIVE 상태 대기 중..."
+            echo "ACTIVE 대기 중..."
             for i in $(seq 1 20); do
               STATUS=$(aws bedrock-agentcore-control get-memory \
-                --memory-id "$MEMORY_ID" \
-                --region ${{ env.AWS_REGION }} \
+                --memory-id "$MEMORY_ID" --region "$REGION" \
                 --query "memory.status" --output text 2>/dev/null || echo "")
               echo "  상태: $STATUS ($i/20)"
-              if [ "$STATUS" = "ACTIVE" ]; then
-                echo "✅ Memory ACTIVE"
-                break
-              fi
+              [ "$STATUS" = "ACTIVE" ] && echo "✅ Memory ACTIVE" && break
               sleep 15
             done
           else
@@ -116,38 +98,29 @@ print(active[0] if active else '')
 
       - name: Create Web Search Gateway (if not exists)
         run: |
-          GATEWAY_ID=$(aws bedrock-agentcore-control list-gateways \
-            --region us-east-1 \
-            --query "items[?name=='dining-web-search'].id | [0]" \
-            --output text 2>/dev/null || echo "")
+          GATEWAYS=$(aws bedrock-agentcore-control list-gateways --region us-east-1 --output json 2>/dev/null || echo '{"items":[]}')
+          GATEWAY_ID=$(echo "$GATEWAYS" | python3 .github/scripts/find_gateway.py)
 
-          if [ -z "$GATEWAY_ID" ] || [ "$GATEWAY_ID" = "None" ]; then
+          if [ -z "$GATEWAY_ID" ]; then
             echo "Gateway 없음 → AWS CLI로 생성"
-
             ROLE_ARN=$(aws iam get-role --role-name dining-gateway-role \
               --query "Role.Arn" --output text 2>/dev/null || echo "")
-
             if [ -z "$ROLE_ARN" ]; then
-              echo "⚠️  dining-gateway-role 없음 — Gateway 생성 건너뜀"
+              echo "⚠️  dining-gateway-role 없음 — Gateway 건너뜀"
             else
               RESULT=$(aws bedrock-agentcore-control create-gateway \
-                --name "dining-web-search" \
-                --protocol-type MCP \
-                --authorizer-type NONE \
-                --role-arn "$ROLE_ARN" \
+                --name "dining-web-search" --protocol-type MCP \
+                --authorizer-type NONE --role-arn "$ROLE_ARN" \
                 --region us-east-1 2>&1)
               echo "$RESULT"
-              GATEWAY_ID=$(echo "$RESULT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['gatewayId'])" 2>/dev/null || echo "")
-
-              # READY 대기
+              GATEWAY_ID=$(echo "$RESULT" | python3 .github/scripts/parse_gateway_id.py)
               echo "Gateway READY 대기 중..."
               for i in $(seq 1 12); do
                 STATUS=$(aws bedrock-agentcore-control get-gateway \
-                  --gateway-identifier "$GATEWAY_ID" \
-                  --region us-east-1 \
+                  --gateway-identifier "$GATEWAY_ID" --region us-east-1 \
                   --query "status" --output text 2>/dev/null || echo "")
                 echo "  상태: $STATUS ($i/12)"
-                [ "$STATUS" = "READY" ] && break
+                [ "$STATUS" = "READY" ] && echo "✅ Gateway READY" && break
                 sleep 10
               done
             fi
@@ -155,40 +128,15 @@ print(active[0] if active else '')
             echo "✅ 기존 Gateway 재사용: $GATEWAY_ID"
           fi
 
-          # Gateway target 추가 (CloudFormation으로)
-          if [ -n "$GATEWAY_ID" ] && [ "$GATEWAY_ID" != "None" ]; then
-            TARGET_COUNT=$(aws bedrock-agentcore-control list-gateway-targets \
-              --gateway-identifier "$GATEWAY_ID" \
-              --region us-east-1 \
-              --query "length(items)" --output text 2>/dev/null || echo "0")
+          if [ -n "$GATEWAY_ID" ]; then
+            TARGETS=$(aws bedrock-agentcore-control list-gateway-targets \
+              --gateway-identifier "$GATEWAY_ID" --region us-east-1 \
+              --output json 2>/dev/null || echo '{"items":[]}')
+            TARGET_COUNT=$(echo "$TARGETS" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('items',[])))")
 
-            if [ "$TARGET_COUNT" = "0" ] || [ -z "$TARGET_COUNT" ]; then
+            if [ "$TARGET_COUNT" = "0" ]; then
               echo "Gateway target 없음 → CloudFormation으로 생성"
-              cat > /tmp/gateway-target.json << CFEOF
-{
-  "AWSTemplateFormatVersion": "2010-09-09",
-  "Resources": {
-    "WebSearchTarget": {
-      "Type": "AWS::BedrockAgentCore::GatewayTarget",
-      "Properties": {
-        "GatewayIdentifier": "$GATEWAY_ID",
-        "Name": "web-search",
-        "Description": "Web Search target",
-        "CredentialProviderConfigurations": [{"CredentialProviderType": "GATEWAY_IAM_ROLE"}],
-        "TargetConfiguration": {
-          "Mcp": {
-            "Connector": {
-              "Source": {"ConnectorId": "web-search"},
-              "Enabled": ["WebSearch"],
-              "Configurations": [{"Name": "WebSearch", "ParameterValues": {}}]
-            }
-          }
-        }
-      }
-    }
-  }
-}
-CFEOF
+              python3 .github/scripts/write_gateway_template.py "$GATEWAY_ID"
               aws cloudformation deploy \
                 --template-file /tmp/gateway-target.json \
                 --stack-name dining-gateway-target \
@@ -217,67 +165,37 @@ CFEOF
 
       - name: Extract ARN/ID/URL and save to SSM
         id: extract
-        working-directory: 02-agent
+        env:
+          REGION: ${{ env.AWS_REGION }}
         run: |
-          # RUNTIME_ARN — AWS CLI로 직접 조회 (파싱 오류 방지)
           RUNTIME_ARN=$(aws bedrock-agentcore-control list-agent-runtimes \
-            --region ${{ env.AWS_REGION }} \
-            --query "agentRuntimes[?status=='READY'].agentRuntimeArn | [0]" \
-            --output text 2>/dev/null || echo "")
+            --region "$REGION" --output json 2>/dev/null | \
+            python3 .github/scripts/find_runtime_arn.py || echo "")
 
-          # MEMORY_ID — AWS CLI로 직접 조회
           MEMORY_ID=$(aws bedrock-agentcore-control list-memories \
-            --region ${{ env.AWS_REGION }} \
-            --query "memories[?contains(name, 'dining') && status=='ACTIVE'].id | [0]" \
-            --output text 2>/dev/null || echo "")
+            --region "$REGION" --output json 2>/dev/null | \
+            python3 .github/scripts/find_memory.py || echo "")
 
-          # GATEWAY_URL — us-east-1에서 조회
-          GATEWAY_ENDPOINT=$(aws bedrock-agentcore-control list-gateways \
-            --region us-east-1 \
-            --query "items[?name=='dining-web-search'].endpoint | [0]" \
-            --output text 2>/dev/null || echo "")
-          if [ -n "$GATEWAY_ENDPOINT" ] && [ "$GATEWAY_ENDPOINT" != "None" ]; then
-            GATEWAY_URL="${GATEWAY_ENDPOINT}/mcp"
-          else
-            GATEWAY_URL=""
-          fi
+          GATEWAY_URL=$(aws bedrock-agentcore-control list-gateways \
+            --region us-east-1 --output json 2>/dev/null | \
+            python3 .github/scripts/find_gateway_url.py || echo "")
 
           echo "RUNTIME_ARN=$RUNTIME_ARN"
           echo "MEMORY_ID=$MEMORY_ID"
           echo "GATEWAY_URL=$GATEWAY_URL"
 
-          # GitHub Actions output
           echo "runtime_arn=$RUNTIME_ARN" >> $GITHUB_OUTPUT
           echo "memory_id=$MEMORY_ID" >> $GITHUB_OUTPUT
           echo "gateway_url=$GATEWAY_URL" >> $GITHUB_OUTPUT
 
-          # SSM Parameter Store에 저장
-          if [ -n "$RUNTIME_ARN" ] && [ "$RUNTIME_ARN" != "None" ]; then
-            aws ssm put-parameter \
-              --name "/dining/RUNTIME_ARN" \
-              --value "$RUNTIME_ARN" \
-              --type String \
-              --overwrite \
-              --region ${{ env.AWS_REGION }}
-            echo "✅ SSM /dining/RUNTIME_ARN 저장 완료"
-          fi
+          [ -n "$RUNTIME_ARN" ] && aws ssm put-parameter --name "/dining/RUNTIME_ARN" \
+            --value "$RUNTIME_ARN" --type String --overwrite --region "$REGION" \
+            && echo "✅ SSM /dining/RUNTIME_ARN"
 
-          if [ -n "$MEMORY_ID" ] && [ "$MEMORY_ID" != "None" ]; then
-            aws ssm put-parameter \
-              --name "/dining/MEMORY_ID" \
-              --value "$MEMORY_ID" \
-              --type String \
-              --overwrite \
-              --region ${{ env.AWS_REGION }}
-            echo "✅ SSM /dining/MEMORY_ID 저장 완료"
-          fi
+          [ -n "$MEMORY_ID" ] && aws ssm put-parameter --name "/dining/MEMORY_ID" \
+            --value "$MEMORY_ID" --type String --overwrite --region "$REGION" \
+            && echo "✅ SSM /dining/MEMORY_ID"
 
-          if [ -n "$GATEWAY_URL" ] && [ "$GATEWAY_URL" != "None" ]; then
-            aws ssm put-parameter \
-              --name "/dining/GATEWAY_URL" \
-              --value "$GATEWAY_URL" \
-              --type String \
-              --overwrite \
-              --region ${{ env.AWS_REGION }}
-            echo "✅ SSM /dining/GATEWAY_URL 저장 완료"
-          fi
+          [ -n "$GATEWAY_URL" ] && aws ssm put-parameter --name "/dining/GATEWAY_URL" \
+            --value "$GATEWAY_URL" --type String --overwrite --region "$REGION" \
+            && echo "✅ SSM /dining/GATEWAY_URL"
