@@ -85,81 +85,155 @@ if [ "$RUN_AGENT" = true ]; then
   echo "============================================================"
   cd 02-agent
 
-  # Memory 추가 (이미 있으면 건너뜀)
-  EXISTING_MEMORY=$(grep -c '"memories":\s*\[\s*{' agentcore/agentcore.json 2>/dev/null || echo "0")
-  if [ "$EXISTING_MEMORY" = "0" ]; then
-    echo "  [1/3] Memory 추가..."
-    npx @aws/agentcore add memory \
-      --name dining_memory \
-      --strategies USER_PREFERENCE,SEMANTIC \
-      --expiry 30 2>/dev/null || echo "  (이미 존재 — 건너뜀)"
-  else
-    echo "  [1/3] Memory 이미 설정됨 — 건너뜀"
+  # [1/4] Memory 생성 (이미 있으면 재사용)
+  echo "  [1/4] Memory 확인/생성..."
+  MEMORY_ID=$(aws ssm get-parameter --name "/dining/MEMORY_ID" \
+    --query "Parameter.Value" --output text --region "$REGION" 2>/dev/null || echo "")
+
+  if [ -z "$MEMORY_ID" ] || [ "$MEMORY_ID" = "None" ]; then
+    # SSM에 없으면 실제 Memory 목록에서 찾기
+    MEMORY_ID=$(aws bedrock-agentcore-control list-memories \
+      --region "$REGION" \
+      --query "memories[?contains(name, 'DiningConcierge')].id | [0]" \
+      --output text 2>/dev/null || echo "")
   fi
 
-  # Gateway 추가 (Web Search, us-east-1 전용)
-  EXISTING_GW=$(grep -c '"agentCoreGateways":\s*\[\s*{' agentcore/agentcore.json 2>/dev/null || echo "0")
-  if [ "$EXISTING_GW" = "0" ]; then
-    echo "  [2/3] Web Search Gateway 추가..."
-    npx @aws/agentcore add gateway \
-      --name dining-web-search \
+  if [ -z "$MEMORY_ID" ] || [ "$MEMORY_ID" = "None" ]; then
+    # 새로 생성
+    MEMORY_RESULT=$(aws bedrock-agentcore-control create-memory \
+      --name "DiningConcierge_memory" \
+      --memory-execution-role-arn "arn:aws:iam::${ACCOUNT_ID}:role/AgentCoreMemoryExecutionRole" \
+      --strategies '[{"type":"USER_PREFERENCE"},{"type":"SEMANTIC"}]' \
+      --region "$REGION" \
+      --output json 2>/dev/null || echo "{}")
+    MEMORY_ID=$(echo "$MEMORY_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('memoryId',''))" 2>/dev/null || echo "")
+    echo "  Memory 생성: $MEMORY_ID"
+  else
+    echo "  기존 Memory 재사용: $MEMORY_ID"
+  fi
+
+  # SSM 저장
+  if [ -n "$MEMORY_ID" ] && [ "$MEMORY_ID" != "None" ]; then
+    aws ssm put-parameter --name "/dining/MEMORY_ID" --value "$MEMORY_ID" \
+      --type String --overwrite --region "$REGION" 2>/dev/null
+    echo "  ✅ SSM /dining/MEMORY_ID: $MEMORY_ID"
+  fi
+
+  # [2/4] Gateway 생성 (이미 있으면 재사용, us-east-1)
+  echo "  [2/4] Web Search Gateway 확인/생성..."
+  GATEWAY_ID=$(aws ssm get-parameter --name "/dining/GATEWAY_URL" \
+    --query "Parameter.Value" --output text --region "$REGION" 2>/dev/null | \
+    grep -oP 'https://\K[^.]+(?=\.gateway)' || echo "")
+
+  if [ -z "$GATEWAY_ID" ]; then
+    GATEWAY_ID=$(aws bedrock-agentcore-control list-gateways \
+      --region us-east-1 \
+      --query "gateways[?contains(name, 'dining-web-search')].gatewayId | [0]" \
+      --output text 2>/dev/null || echo "")
+  fi
+
+  if [ -z "$GATEWAY_ID" ] || [ "$GATEWAY_ID" = "None" ]; then
+    # Gateway 생성
+    GATEWAY_RESULT=$(aws bedrock-agentcore-control create-gateway \
+      --name "dining-web-search" \
       --protocol-type MCP \
-      --authorizer-type NONE 2>/dev/null || echo "  (이미 존재 — 건너뜀)"
+      --authorizer-configuration '{"type":"NONE"}' \
+      --region us-east-1 --output json 2>/dev/null || echo "{}")
+    GATEWAY_ID=$(echo "$GATEWAY_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('gatewayId',''))" 2>/dev/null || echo "")
+    echo "  Gateway 생성: $GATEWAY_ID"
 
-    npx @aws/agentcore add gateway-target \
-      --name web-search \
-      --gateway dining-web-search \
-      --type connector \
-      --connector web-search 2>/dev/null || echo "  (이미 존재 — 건너뜀)"
+    # Gateway Target 생성 (CloudFormation 사용)
+    if [ -n "$GATEWAY_ID" ]; then
+      cat > /tmp/gateway-target.json <<CFEOF
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "WebSearchTarget": {
+      "Type": "AWS::BedrockAgentCore::GatewayTarget",
+      "Properties": {
+        "GatewayIdentifier": "${GATEWAY_ID}",
+        "Name": "web-search-target",
+        "TargetConfiguration": {
+          "Mcp": {
+            "Connector": {
+              "Source": { "ConnectorId": "web-search" },
+              "Enabled": ["WebSearch"]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+CFEOF
+      aws cloudformation deploy \
+        --template-file /tmp/gateway-target.json \
+        --stack-name dining-gateway-target \
+        --region us-east-1 2>/dev/null || echo "  ⚠️ GatewayTarget 생성 실패 (수동 생성 필요)"
+    fi
   else
-    echo "  [2/3] Gateway 이미 설정됨 — 건너뜀"
+    echo "  기존 Gateway 재사용: $GATEWAY_ID"
   fi
 
-  # 배포 (Runtime + Memory + Gateway)
-  echo "  [3/3] AgentCore 배포..."
+  GATEWAY_URL="https://${GATEWAY_ID}.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
+  if [ -n "$GATEWAY_ID" ] && [ "$GATEWAY_ID" != "None" ]; then
+    aws ssm put-parameter --name "/dining/GATEWAY_URL" --value "$GATEWAY_URL" \
+      --type String --overwrite --region "$REGION" 2>/dev/null
+    echo "  ✅ SSM /dining/GATEWAY_URL: $GATEWAY_URL"
+  fi
+
+  # [3/4] AgentCore Runtime 배포
+  echo "  [3/4] AgentCore Runtime 배포..."
   bash deploy.sh
   cd "$SCRIPT_DIR"
 
-  # RUNTIME_ARN 추출
-  RUNTIME_ARN=$(npx @aws/agentcore status --json 2>/dev/null | \
-    python3 -c "import sys,json; data=json.load(sys.stdin); print(data['runtimes'][0]['arn'])" 2>/dev/null || echo "")
-  if [ -z "$RUNTIME_ARN" ]; then
-    RUNTIME_ARN=$(npx @aws/agentcore status 2>/dev/null | grep -oP 'arn:aws:bedrock-agentcore:[^\s)]+' | head -1)
-  fi
+  # RUNTIME_ARN 추출 (AWS CLI 직접 조회)
+  RUNTIME_ARN=$(aws bedrock-agentcore-control list-agent-runtimes \
+    --region "$REGION" \
+    --query "agentRuntimes[?status=='READY'].agentRuntimeArn | [0]" \
+    --output text 2>/dev/null || echo "")
 
-  # MEMORY_ID 추출
-  MEMORY_ID=$(aws bedrock-agentcore-control list-memories \
-    --region "$AWS_REGION" \
-    --query "memories[0].id" --output text 2>/dev/null || echo "")
-  if [ -z "$MEMORY_ID" ]; then
-    MEMORY_ID=$(npx @aws/agentcore status 2>/dev/null | grep -oP '[A-Za-z0-9_]+-[A-Za-z0-9]+' | grep -i memory | head -1 || echo "")
-  fi
-
-  # GATEWAY_URL 추출
-  GATEWAY_ID=$(npx @aws/agentcore status 2>/dev/null | grep -oP 'dining-web-search[^\s]+' | head -1 || echo "")
-  if [ -n "$GATEWAY_ID" ]; then
-    GATEWAY_URL="https://${GATEWAY_ID}.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
-  else
-    GATEWAY_URL=""
-  fi
-
-  # SSM Parameter Store에 저장 (CI/CD에서 자동으로 읽음)
-  if [ -n "$RUNTIME_ARN" ]; then
+  if [ -n "$RUNTIME_ARN" ] && [ "$RUNTIME_ARN" != "None" ]; then
     aws ssm put-parameter --name "/dining/RUNTIME_ARN" --value "$RUNTIME_ARN" \
-      --type String --overwrite --region "$AWS_REGION" 2>/dev/null
-    echo "✅ SSM /dining/RUNTIME_ARN: $RUNTIME_ARN"
-  else
-    echo "⚠️  RUNTIME_ARN 추출 실패"
+      --type String --overwrite --region "$REGION" 2>/dev/null
+    echo "  ✅ SSM /dining/RUNTIME_ARN: $RUNTIME_ARN"
   fi
-  if [ -n "$MEMORY_ID" ]; then
-    aws ssm put-parameter --name "/dining/MEMORY_ID" --value "$MEMORY_ID" \
-      --type String --overwrite --region "$AWS_REGION" 2>/dev/null
-    echo "✅ SSM /dining/MEMORY_ID: $MEMORY_ID"
-  fi
-  if [ -n "$GATEWAY_URL" ]; then
-    aws ssm put-parameter --name "/dining/GATEWAY_URL" --value "$GATEWAY_URL" \
-      --type String --overwrite --region "$AWS_REGION" 2>/dev/null
-    echo "✅ SSM /dining/GATEWAY_URL: $GATEWAY_URL"
+
+  # [4/4] Runtime Role에 Memory 권한 추가
+  echo "  [4/4] Runtime Role IAM 권한 추가..."
+  ROLE_NAME=$(aws cloudformation describe-stack-resources \
+    --stack-name AgentCore-DiningConcierge-default \
+    --query "StackResources[?ResourceType=='AWS::IAM::Role'].PhysicalResourceId | [0]" \
+    --output text --region "$REGION" 2>/dev/null || echo "")
+
+  if [ -n "$ROLE_NAME" ] && [ "$ROLE_NAME" != "None" ]; then
+    aws iam put-role-policy \
+      --role-name "$ROLE_NAME" \
+      --policy-name "MemoryAndSSMPolicy" \
+      --policy-document '{
+        "Version":"2012-10-17",
+        "Statement":[
+          {
+            "Effect":"Allow",
+            "Action":[
+              "bedrock-agentcore:RetrieveMemoryRecords",
+              "bedrock-agentcore:CreateEvent",
+              "bedrock-agentcore:ListMemoryRecords",
+              "bedrock-agentcore:GetMemory",
+              "bedrock-agentcore:ListSessions",
+              "bedrock-agentcore:ListEvents",
+              "bedrock-agentcore:DeleteMemoryRecord",
+              "bedrock-agentcore:DeleteEvent"
+            ],
+            "Resource":"*"
+          },
+          {
+            "Effect":"Allow",
+            "Action":["ssm:GetParameter","ssm:GetParameters"],
+            "Resource":"arn:aws:ssm:*:*:parameter/dining/*"
+          }
+        ]
+      }' 2>/dev/null && echo "  ✅ IAM 권한 추가 완료" || echo "  ⚠️ IAM 권한 추가 실패 (수동 확인 필요)"
   fi
 
   # 03-app/.env 생성 (로컬 앱용)
@@ -168,10 +242,10 @@ if [ "$RUN_AGENT" = true ]; then
 RUNTIME_ARN=${RUNTIME_ARN}
 MEMORY_ID=${MEMORY_ID}
 GATEWAY_WEB_SEARCH_URL=${GATEWAY_URL}
-AWS_REGION=${AWS_REGION:-us-west-2}
+AWS_REGION=${REGION}
+AWS_DEFAULT_REGION=${REGION}
 EOF
-  echo "✅ 03-app/.env 생성 완료"
-
+  echo "  ✅ 03-app/.env 생성 완료"
   echo ""
 fi
 
@@ -198,12 +272,15 @@ if [ "$RUN_SAM" = true ]; then
   echo "============================================================"
   cd 05-sam
 
-  # RUNTIME_ARN을 SSM에서 읽기 (없으면 직접 조회)
+  # RUNTIME_ARN, MEMORY_ID를 SSM에서 읽기
   RUNTIME_ARN=$(aws ssm get-parameter --name "/dining/RUNTIME_ARN" \
-    --query "Parameter.Value" --output text --region "$AWS_REGION" 2>/dev/null || echo "")
+    --query "Parameter.Value" --output text --region "$REGION" 2>/dev/null || echo "")
+  MEMORY_ID=$(aws ssm get-parameter --name "/dining/MEMORY_ID" \
+    --query "Parameter.Value" --output text --region "$REGION" 2>/dev/null || echo "")
+
   if [ -z "$RUNTIME_ARN" ]; then
     RUNTIME_ARN=$(aws bedrock-agentcore-control list-agent-runtimes \
-      --region "$AWS_REGION" \
+      --region "$REGION" \
       --query "agentRuntimes[?status=='READY'].agentRuntimeArn | [0]" \
       --output text 2>/dev/null || echo "")
   fi
@@ -212,7 +289,7 @@ if [ "$RUN_SAM" = true ]; then
   sam deploy \
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
-    --parameter-overrides RuntimeArn="$RUNTIME_ARN"
+    --parameter-overrides RuntimeArn="$RUNTIME_ARN" MemoryId="$MEMORY_ID"
 
   # API URL 추출 + SSM 저장
   API_URL=$(aws cloudformation describe-stacks \
@@ -409,15 +486,13 @@ echo "============================================================"
 echo "✅ 설정 완료!"
 echo "============================================================"
 echo ""
-echo "수동 확인/설정 필요:"
-echo "  - 03-app/app.py, 03-app/tools.py → 자동 업데이트됨 (확인만)"
-echo ""
 echo "실행 방법:"
 echo "  [Streamlit 로컬] cd 03-app && source venv/bin/activate && streamlit run app.py"
 echo "  [SAM API 테스트] curl -X POST \$(cat 05-sam/api-url.txt)/chat -d '{\"message\":\"이탈리안 추천해줘\"}'"
 echo "  [Frontend]       브라우저에서 CloudFront URL 또는 06-frontend/cloudfront-url.txt 참조"
 echo ""
-echo "선택적 추가:"
-echo "  - Memory 생성: AgentCore 콘솔에서 memory 생성 후 app.py의 MEMORY_ID 수정"
-echo "  - Gateway (Web Search): us-east-1에서 Gateway + Connector 생성"
+echo "⚠️  수동 확인 필요:"
+echo "  - GitHub Secrets에 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN 등록"
+echo "  - 03-app/.env에 AWS 자격증명 추가 (로컬 앱 실행 시)"
+echo "  - Bedrock 모델 접근 활성화: Nova Lite, Titan Embed V2"
 echo ""
