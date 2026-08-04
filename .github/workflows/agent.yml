@@ -69,12 +69,19 @@ jobs:
 
       - name: Create Memory (if not exists)
         run: |
+          # JMESPath && 대신 Python으로 필터링
           MEMORY_ID=$(aws bedrock-agentcore-control list-memories \
             --region ${{ env.AWS_REGION }} \
-            --query "memories[?contains(name, 'dining')].id | [0]" \
-            --output text 2>/dev/null || echo "")
+            --output json 2>/dev/null | \
+            python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+memories = data.get('memories', [])
+active = [m['id'] for m in memories if 'dining' in m.get('name','').lower() and m.get('status') == 'ACTIVE']
+print(active[0] if active else '')
+" || echo "")
 
-          if [ -z "$MEMORY_ID" ] || [ "$MEMORY_ID" = "None" ]; then
+          if [ -z "$MEMORY_ID" ]; then
             echo "Memory 없음 → 새로 생성"
             RESULT=$(aws bedrock-agentcore-control create-memory \
               --name "DiningConcierge_dining_memory" \
@@ -86,9 +93,10 @@ jobs:
               --region ${{ env.AWS_REGION }} 2>&1)
             echo "$RESULT"
 
-            # ACTIVE 대기
             MEMORY_ID=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['memory']['id'])" 2>/dev/null || echo "")
             echo "생성된 Memory ID: $MEMORY_ID"
+
+            # ACTIVE 대기
             echo "ACTIVE 상태 대기 중..."
             for i in $(seq 1 20); do
               STATUS=$(aws bedrock-agentcore-control get-memory \
