@@ -1070,6 +1070,10 @@ REACT_APP_API_URL → npm run build → 프론트엔드에 번들
 | Memory 취향 반영 안 됨 | Lambda에 MEMORY_ID 없음 + Memory 조회 로직 없음 | Lambda에 Memory 조회 추가, 환경변수 주입 |
 | Memory retrieve 0건 | API 응답 키 `memoryRecords` → `memoryRecordSummaries` 변경 | 전체 코드 키 수정 |
 | CDK 배포 실패 | agentcore.json의 Memory/Gateway CDK 관리 충돌 | CDK에서 제거, CLI로 별도 관리 |
+| Web Search 응답 없음 | 도구 이름 `web-search___WebSearch`의 `___`로 modelStreamErrorException | `@tool`로 래핑하여 `WebSearch`로 단순화 |
+| Web Search 강남 날씨 안 나옴 | 검색 엔진이 "강남" 쿼리를 강남구로 매핑 못 함 | "서울 강남구" 또는 영문 쿼리 사용 권장 |
+| MCP 연결 오버헤드 | 매 요청마다 MCPClient start/stop | 싱글턴으로 변경 (앱 시작 시 1회 초기화) |
+| Runtime Memory/Gateway 미적용 | 환경변수 미주입 | 환경변수 없으면 SSM에서 자동 조회하도록 변경 |
 
 ### 다음 단계
 

@@ -265,4 +265,67 @@ Connector integration web-search is not available for this account.
 
 ---
 
+## 18. Web Search Gateway target 생성 실패 (CLI 미지원)
+
+**증상**: `create-gateway-target` CLI로 web-search connector 추가 시 파라미터 오류
+```
+Unknown parameter in targetConfiguration.mcp: "connector"
+```
+
+**원인**: AWS CLI의 `create-gateway-target`은 `connector` 타입을 지원하지 않음. CDK 내부적으로 `CfnResource` escape hatch로 처리하는 방식이라 CLI에 노출 안 됨
+
+**해결**: CloudFormation으로 직접 `GatewayTarget` 리소스 생성
+```bash
+aws cloudformation deploy \
+  --template-file /tmp/gateway-target.json \
+  --stack-name dining-gateway-target \
+  --region us-east-1
+```
+template 내 `TargetConfiguration.Mcp.Connector.Source.ConnectorId: "web-search"` 구조 사용
+
+**상태**: ✅ 해결
+
+---
+
+## 19. Web Search 도구 이름 `web-search___WebSearch` → modelStreamErrorException
+
+**증상**: "현재 강남 날씨 알려줘" 입력 시 응답 없음
+```
+modelStreamErrorException: Model produced invalid sequence as part of ToolUse.
+```
+
+**원인**: MCP Gateway에서 노출하는 도구 이름이 `web-search___WebSearch` (언더스코어 3개 포함). Nova Lite 모델이 이 특수문자 포함 이름으로 ToolUse 시퀀스 처리 시 오류 발생
+
+**해결**: `@tool` 데코레이터로 래핑하여 이름을 `WebSearch`로 단순화
+```python
+@strands_tool
+def WebSearch(query: str, maxResults: int = 5) -> str:
+    """실시간 웹 검색으로 날씨, 이벤트, 뉴스 등 최신 정보를 조회합니다."""
+    result = _mcp_web.call_tool_sync(
+        name="web-search___WebSearch",  # 실제 Gateway 도구명
+        arguments={"query": query, "maxResults": maxResults}
+    )
+```
+
+**상태**: ✅ 해결
+
+---
+
+## 20. Web Search 결과에 강남 날씨 미포함
+
+**증상**: WebSearch 도구 호출 성공했으나 응답이 "실시간 날씨 정보를 제공하지 못합니다"
+```
+검색어: "현재 강남 날씨"
+결과: 워싱턴, 가평, 부산, 뉴욕, 삿포로 날씨 (강남 없음)
+```
+
+**원인**: Web Search Gateway 내부 검색 엔진이 "강남" 쿼리를 한국 강남구로 정확히 매핑하지 못함
+
+**우회**: 더 구체적인 쿼리 사용
+- `"서울 강남구 현재 날씨"` 또는 `"Gangnam Seoul weather now"` 사용 시 정확한 결과 반환 가능
+
+**상태**: 🟡 부분 해결 (쿼리 표현에 따라 결과 다름)
+
+---
+
 *마지막 업데이트: 2026-08-05*
