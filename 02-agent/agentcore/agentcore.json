@@ -18,55 +18,12 @@
       "protocol": "HTTP"
     }
   ],
-  "memories": [
-    {
-      "name": "dining_memory_v2",
-      "eventExpiryDuration": 30,
-      "strategies": [
-        {
-          "type": "USER_PREFERENCE",
-          "namespaceTemplates": [
-            "/users/{actorId}/preferences"
-          ]
-        },
-        {
-          "type": "SEMANTIC",
-          "namespaceTemplates": [
-            "/users/{actorId}/facts"
-          ]
-        }
-      ]
-    }
-  ],
+  "memories": [],
   "knowledgeBases": [],
   "credentials": [],
   "evaluators": [],
   "onlineEvalConfigs": [],
-  "agentCoreGateways": [
-    {
-      "name": "dining-web-search",
-      "protocolType": "MCP",
-      "description": "Gateway for dining-web-search",
-      "targets": [
-        {
-          "name": "web-search",
-          "targetType": "connector",
-          "connectorId": "web-search",
-          "configurations": [
-            {
-              "name": "WebSearch",
-              "description": "",
-              "parameterValues": {},
-              "parameterOverrides": []
-            }
-          ]
-        }
-      ],
-      "authorizerType": "NONE",
-      "enableSemanticSearch": true,
-      "exceptionLevel": "NONE"
-    }
-  ],
+  "agentCoreGateways": [],
   "policyEngines": [],
   "configBundles": [],
   "abTests": [],
