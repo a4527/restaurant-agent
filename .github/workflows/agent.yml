@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '02-agent/**'
+      - '04-pipeline/**'
   workflow_dispatch:
 
 env:
