@@ -67,10 +67,11 @@ jobs:
           npm run build
 
       - name: CDK Bootstrap
+        working-directory: 02-agent/agentcore/cdk
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           npx cdk bootstrap aws://${ACCOUNT_ID}/${{ env.AWS_REGION }}
 
       - name: Deploy to AgentCore Runtime
         working-directory: 02-agent
-        run: npx @aws/agentcore deploy --yes
+        run: npx @aws/agentcore deploy --yes --verbose
