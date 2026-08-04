@@ -41,7 +41,7 @@ def get_memory_context(actor_id: str, query: str) -> str:
                 if text and text not in prefs:
                     prefs.append(text)
         if prefs:
-            return "[사용자 취향 정보]\n" + "\n".join(f"- {p}" for p in prefs) + "\n\n위 취향을 반드시 반영하여 답변하세요.\n\n"
+            return "[사용자 이전 취향 (참고용, 현재 요청을 우선시하세요)]\n" + "\n".join(f"- {p}" for p in prefs) + "\n\n"
     except Exception as e:
         print(f"Memory 조회 오류: {e}")
     return ""
