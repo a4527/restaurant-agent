@@ -1,0 +1,29 @@
+================================================================================
+AGENTCORE STATUS LOG
+Command: status
+Started: 2026-08-04T07:08:18.673Z
+================================================================================
+
+
+[16:08:18] STEP: Resolve target
+[16:08:18] Project: DiningConcierge
+[16:08:18] Available targets: default
+[16:08:18] Selected target: default
+[16:08:18] Status: SUCCESS
+[16:08:18] Duration: 0ms
+
+[16:08:18] STEP: Compute resource statuses
+[16:08:18] Resources: 1 total (1 deployed, 0 local-only, 0 pending-removal)
+[16:08:18]   agent/DiningConcierge: deployed [arn:aws:bedrock-agentcore:us-west-2:678498164624:runtime/DiningConcierge_DiningConcierge-aLEpSdHOiw]
+[16:08:18] Status: SUCCESS
+[16:08:18] Duration: 1ms
+
+[16:08:18] STEP: Fetch runtime status (1 agent)
+[16:08:19]   DiningConcierge: READY (DiningConcierge_DiningConcierge-aLEpSdHOiw)
+[16:08:19] Status: SUCCESS
+[16:08:19] Duration: 524ms
+
+================================================================================
+COMPLETED SUCCESSFULLY
+Total Duration: 527ms
+================================================================================

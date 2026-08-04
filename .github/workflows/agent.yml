@@ -1,0 +1,68 @@
+name: Agent - Evaluate & Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '02-agent/**'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-west-2
+
+jobs:
+  evaluate:
+    name: Strands Evals Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install strands-agents strands-agents-evals boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run evaluation
+        working-directory: 04-pipeline
+        run: python eval_gate.py
+
+  deploy:
+    name: AgentCore Deploy
+    needs: evaluate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install AgentCore CLI
+        run: npm install -g @aws/agentcore
+
+      - name: Install CDK dependencies
+        working-directory: 02-agent/agentcore/cdk
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy to AgentCore Runtime
+        working-directory: 02-agent
+        run: npx @aws/agentcore deploy --yes

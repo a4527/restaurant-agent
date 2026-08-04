@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Node
+node_modules/
+06-frontend/build/
+
+# SAM
+05-sam/.aws-sam/
+
+# AgentCore CDK
+02-agent/agentcore/cdk/node_modules/
+02-agent/agentcore/cdk/cdk.out/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+*.zip

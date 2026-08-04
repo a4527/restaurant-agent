@@ -1,0 +1,17 @@
+{
+  "targets": {
+    "default": {
+      "resources": {
+        "runtimes": {
+          "DiningConcierge": {
+            "runtimeId": "DiningConcierge_DiningConcierge-aLEpSdHOiw",
+            "runtimeArn": "arn:aws:bedrock-agentcore:us-west-2:678498164624:runtime/DiningConcierge_DiningConcierge-aLEpSdHOiw",
+            "roleArn": "arn:aws:iam::678498164624:role/AgentCore-DiningConcierge-ApplicationAgentDiningCon-PTmGdVttMpjz"
+          }
+        },
+        "stackName": "AgentCore-DiningConcierge-default",
+        "deployHash": "038e5e340da36457"
+      }
+    }
+  }
+}

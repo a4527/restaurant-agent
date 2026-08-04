@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Dining SAM API - Proxy to AgentCore Runtime
+
+Globals:
+  Function:
+    Timeout: 90
+    MemorySize: 256
+    Runtime: python3.12
+
+Resources:
+  ChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: chat_function/
+      Handler: app.lambda_handler
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          RUNTIME_ARN: arn:aws:bedrock-agentcore:us-west-2:678498164624:runtime/DiningConcierge_DiningConcierge-aLEpSdHOiw
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock-agentcore:InvokeAgentRuntime
+              Resource: "*"
+      Events:
+        ChatPost:
+          Type: Api
+          Properties:
+            Path: /chat
+            Method: post
+        ChatOptions:
+          Type: Api
+          Properties:
+            Path: /chat
+            Method: options
+
+Outputs:
+  ChatApiUrl:
+    Description: API Gateway endpoint URL for the Chat function
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+  ChatFunction:
+    Description: Chat Lambda Function ARN
+    Value: !GetAtt ChatFunction.Arn

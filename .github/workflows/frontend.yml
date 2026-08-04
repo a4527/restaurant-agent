@@ -1,0 +1,64 @@
+name: Frontend - Build & Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '06-frontend/**'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-west-2
+
+jobs:
+  deploy:
+    name: Build & Deploy to S3 + CloudFront
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get API URL
+        id: api-url
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name dining-sam-api \
+            --query "Stacks[0].Outputs[?OutputKey=='ChatApiUrl'].OutputValue" \
+            --output text --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+          echo "url=$API_URL" >> $GITHUB_OUTPUT
+
+      - name: Install & Build
+        working-directory: 06-frontend
+        env:
+          REACT_APP_API_URL: ${{ steps.api-url.outputs.url }}
+        run: |
+          npm install
+          npm run build
+
+      - name: Deploy to S3
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="dining-frontend-${ACCOUNT_ID}"
+          aws s3 sync 06-frontend/build/ s3://${BUCKET}/ --delete --region ${{ env.AWS_REGION }}
+
+      - name: Invalidate CloudFront cache
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="dining-frontend-${ACCOUNT_ID}"
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, '${BUCKET}')].Id" \
+            --output text 2>/dev/null || echo "")
+          if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
+            aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*" > /dev/null
+            echo "✅ CloudFront 캐시 무효화 완료: $DIST_ID"
+          fi

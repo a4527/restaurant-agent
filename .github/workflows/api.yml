@@ -1,0 +1,48 @@
+name: API - Build & Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '05-sam/**'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-west-2
+  SAM_STACK_NAME: dining-sam-api
+
+jobs:
+  deploy:
+    name: SAM Build & Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install SAM CLI
+        uses: aws-actions/setup-sam@v2
+
+      - name: SAM Build
+        working-directory: 05-sam
+        run: sam build
+
+      - name: SAM Deploy
+        working-directory: 05-sam
+        run: |
+          sam deploy \
+            --stack-name ${{ env.SAM_STACK_NAME }} \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --capabilities CAPABILITY_IAM \
+            --resolve-s3 \
+            --region ${{ env.AWS_REGION }}

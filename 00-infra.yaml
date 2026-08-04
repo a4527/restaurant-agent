@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: DiningConcierge - Base Infrastructure (IAM, S3)
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: DiningConcierge
+  AccountId:
+    Type: String
+    Description: AWS Account ID
+
+Resources:
+  # ── S3 버킷: KB 데이터 소스 ──
+  KBDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "dining-kb-data-${AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+
+  # ── S3 버킷: Frontend 정적 호스팅 ──
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "dining-frontend-${AccountId}"
+
+  # ── IAM: Bedrock KB 역할 ──
+  KBRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: dining-kb-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: kb-s3-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt KBDataBucket.Arn
+                  - !Sub "${KBDataBucket.Arn}/*"
+        - PolicyName: kb-bedrock-embed
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: "*"
+        - PolicyName: kb-aoss-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - aoss:APIAccessAll
+                Resource: !Sub "arn:aws:aoss:${AWS::Region}:${AccountId}:collection/*"
+
+  # ── IAM: Gateway 역할 ──
+  GatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: dining-gateway-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: gateway-web-search
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:InvokeGateway
+                  - bedrock-agentcore:InvokeWebSearch
+                Resource: "*"
+
+Outputs:
+  KBDataBucketName:
+    Value: !Ref KBDataBucket
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
+  KBRoleArn:
+    Value: !GetAtt KBRole.Arn
+  GatewayRoleArn:
+    Value: !GetAtt GatewayRole.Arn

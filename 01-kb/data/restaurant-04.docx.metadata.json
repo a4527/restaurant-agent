@@ -1,0 +1,52 @@
+{
+  "metadataAttributes": {
+    "category": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "중식"
+      }
+    },
+    "location": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "역삼역"
+      }
+    },
+    "price_min": {
+      "value": {
+        "type": "NUMBER",
+        "numberValue": 12000
+      }
+    },
+    "price_max": {
+      "value": {
+        "type": "NUMBER",
+        "numberValue": 35000
+      }
+    },
+    "rating": {
+      "value": {
+        "type": "NUMBER",
+        "numberValue": 4.3
+      }
+    },
+    "reservation_available": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "true"
+      }
+    },
+    "max_party_size": {
+      "value": {
+        "type": "NUMBER",
+        "numberValue": 15
+      }
+    },
+    "recommended_for": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "친구 모임, 가성비, 점심"
+      }
+    }
+  }
+}

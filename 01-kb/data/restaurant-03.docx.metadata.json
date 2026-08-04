@@ -1,0 +1,52 @@
+{
+  "metadataAttributes": {
+    "category": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "한식"
+      }
+    },
+    "location": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "강남역"
+      }
+    },
+    "price_min": {
+      "value": {
+        "type": "NUMBER",
+        "numberValue": 45000
+      }
+    },
+    "price_max": {
+      "value": {
+        "type": "NUMBER",
+        "numberValue": 70000
+      }
+    },
+    "rating": {
+      "value": {
+        "type": "NUMBER",
+        "numberValue": 4.6
+      }
+    },
+    "reservation_available": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "true"
+      }
+    },
+    "max_party_size": {
+      "value": {
+        "type": "NUMBER",
+        "numberValue": 30
+      }
+    },
+    "recommended_for": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "회식, 가족 모임, 접대"
+      }
+    }
+  }
+}

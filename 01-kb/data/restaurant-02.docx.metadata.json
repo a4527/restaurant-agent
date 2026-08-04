@@ -1,0 +1,52 @@
+{
+  "metadataAttributes": {
+    "category": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "일식"
+      }
+    },
+    "location": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "신논현역"
+      }
+    },
+    "price_min": {
+      "value": {
+        "type": "NUMBER",
+        "numberValue": 60000
+      }
+    },
+    "price_max": {
+      "value": {
+        "type": "NUMBER",
+        "numberValue": 90000
+      }
+    },
+    "rating": {
+      "value": {
+        "type": "NUMBER",
+        "numberValue": 4.8
+      }
+    },
+    "reservation_available": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "true"
+      }
+    },
+    "max_party_size": {
+      "value": {
+        "type": "NUMBER",
+        "numberValue": 8
+      }
+    },
+    "recommended_for": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "데이트, 접대, 기념일"
+      }
+    }
+  }
+}
