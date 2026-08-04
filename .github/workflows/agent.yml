@@ -151,26 +151,27 @@ jobs:
         id: extract
         working-directory: 02-agent
         run: |
-          # RUNTIME_ARN 추출
-          RUNTIME_ARN=$(npx @aws/agentcore status --json 2>/dev/null | \
-            python3 -c "import sys,json; d=json.load(sys.stdin); print(d['runtimes'][0]['arn'])" 2>/dev/null || \
-            npx @aws/agentcore status 2>/dev/null | grep -oP 'arn:aws:bedrock-agentcore:[^\s)]+' | head -1)
+          # RUNTIME_ARN — AWS CLI로 직접 조회 (파싱 오류 방지)
+          RUNTIME_ARN=$(aws bedrock-agentcore-control list-agent-runtimes \
+            --region ${{ env.AWS_REGION }} \
+            --query "agentRuntimes[?status=='READY'].agentRuntimeArn | [0]" \
+            --output text 2>/dev/null || echo "")
 
-          # MEMORY_ID 추출
+          # MEMORY_ID — AWS CLI로 직접 조회
           MEMORY_ID=$(aws bedrock-agentcore-control list-memories \
             --region ${{ env.AWS_REGION }} \
-            --query "memories[0].id" --output text 2>/dev/null || echo "")
+            --query "memories[?contains(name, 'dining') && status=='ACTIVE'].id | [0]" \
+            --output text 2>/dev/null || echo "")
 
-          # GATEWAY_URL 추출
-          GATEWAY_ID=$(npx @aws/agentcore status 2>/dev/null | \
-            grep -oP 'dining-web-search[^\s]+' | head -1 || echo "")
-          if [ -n "$GATEWAY_ID" ]; then
-            GATEWAY_URL="https://${GATEWAY_ID}.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
+          # GATEWAY_URL — us-east-1에서 조회
+          GATEWAY_ENDPOINT=$(aws bedrock-agentcore-control list-gateways \
+            --region us-east-1 \
+            --query "items[?name=='dining-web-search'].endpoint | [0]" \
+            --output text 2>/dev/null || echo "")
+          if [ -n "$GATEWAY_ENDPOINT" ] && [ "$GATEWAY_ENDPOINT" != "None" ]; then
+            GATEWAY_URL="${GATEWAY_ENDPOINT}/mcp"
           else
-            GATEWAY_URL=$(aws bedrock-agentcore-control list-gateways \
-              --region us-east-1 \
-              --query "items[?name=='dining-web-search'].endpoint" \
-              --output text 2>/dev/null || echo "")
+            GATEWAY_URL=""
           fi
 
           echo "RUNTIME_ARN=$RUNTIME_ARN"
@@ -182,8 +183,8 @@ jobs:
           echo "memory_id=$MEMORY_ID" >> $GITHUB_OUTPUT
           echo "gateway_url=$GATEWAY_URL" >> $GITHUB_OUTPUT
 
-          # SSM Parameter Store에 저장 (다른 워크플로우에서 읽기 위해)
-          if [ -n "$RUNTIME_ARN" ]; then
+          # SSM Parameter Store에 저장
+          if [ -n "$RUNTIME_ARN" ] && [ "$RUNTIME_ARN" != "None" ]; then
             aws ssm put-parameter \
               --name "/dining/RUNTIME_ARN" \
               --value "$RUNTIME_ARN" \
@@ -193,7 +194,7 @@ jobs:
             echo "✅ SSM /dining/RUNTIME_ARN 저장 완료"
           fi
 
-          if [ -n "$MEMORY_ID" ]; then
+          if [ -n "$MEMORY_ID" ] && [ "$MEMORY_ID" != "None" ]; then
             aws ssm put-parameter \
               --name "/dining/MEMORY_ID" \
               --value "$MEMORY_ID" \
@@ -203,7 +204,7 @@ jobs:
             echo "✅ SSM /dining/MEMORY_ID 저장 완료"
           fi
 
-          if [ -n "$GATEWAY_URL" ]; then
+          if [ -n "$GATEWAY_URL" ] && [ "$GATEWAY_URL" != "None" ]; then
             aws ssm put-parameter \
               --name "/dining/GATEWAY_URL" \
               --value "$GATEWAY_URL" \
