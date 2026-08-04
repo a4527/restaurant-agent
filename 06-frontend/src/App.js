@@ -32,7 +32,7 @@ const TOOL_ICONS = {
   create_reservation: '✅',
   estimate_cost: '💰',
   WebSearch: '🌐',
-  'web-search-tool___WebSearch': '🌐',
+  'web-search___WebSearch': '🌐',
 };
 
 // ── 유틸 ──────────────────────────────────────────────

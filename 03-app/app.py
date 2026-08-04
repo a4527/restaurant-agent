@@ -31,7 +31,7 @@ TOOL_ICONS = {
     "check_reservation": "📅",
     "create_reservation": "✅",
     "estimate_cost": "💰",
-    "web-search-tool___WebSearch": "🌐",
+    "web-search___WebSearch": "🌐",
     "WebSearch": "🌐",
 }
 
@@ -47,7 +47,7 @@ def web_search(query: str, max_results: int = 5) -> str | None:
         mcp.start()
         result = mcp.call_tool_sync(
             tool_use_id="app-websearch",
-            name="web-search-tool___WebSearch",
+            name="web-search___WebSearch",
             arguments={"query": query, "maxResults": max_results}
         )
         mcp.stop(None, None, None)

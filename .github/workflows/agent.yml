@@ -116,7 +116,6 @@ jobs:
           if [ -z "$GATEWAY_ID" ] || [ "$GATEWAY_ID" = "None" ]; then
             echo "Gateway 없음 → AWS CLI로 생성"
 
-            # Gateway role ARN 조회
             ROLE_ARN=$(aws iam get-role --role-name dining-gateway-role \
               --query "Role.Arn" --output text 2>/dev/null || echo "")
 
@@ -143,10 +142,53 @@ jobs:
                 [ "$STATUS" = "READY" ] && break
                 sleep 10
               done
-              echo "✅ Gateway 생성 완료: $GATEWAY_ID"
             fi
           else
             echo "✅ 기존 Gateway 재사용: $GATEWAY_ID"
+          fi
+
+          # Gateway target 추가 (CloudFormation으로)
+          if [ -n "$GATEWAY_ID" ] && [ "$GATEWAY_ID" != "None" ]; then
+            TARGET_COUNT=$(aws bedrock-agentcore-control list-gateway-targets \
+              --gateway-identifier "$GATEWAY_ID" \
+              --region us-east-1 \
+              --query "length(items)" --output text 2>/dev/null || echo "0")
+
+            if [ "$TARGET_COUNT" = "0" ] || [ -z "$TARGET_COUNT" ]; then
+              echo "Gateway target 없음 → CloudFormation으로 생성"
+              cat > /tmp/gateway-target.json << CFEOF
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "WebSearchTarget": {
+      "Type": "AWS::BedrockAgentCore::GatewayTarget",
+      "Properties": {
+        "GatewayIdentifier": "$GATEWAY_ID",
+        "Name": "web-search",
+        "Description": "Web Search target",
+        "CredentialProviderConfigurations": [{"CredentialProviderType": "GATEWAY_IAM_ROLE"}],
+        "TargetConfiguration": {
+          "Mcp": {
+            "Connector": {
+              "Source": {"ConnectorId": "web-search"},
+              "Enabled": ["WebSearch"],
+              "Configurations": [{"Name": "WebSearch", "ParameterValues": {}}]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+CFEOF
+              aws cloudformation deploy \
+                --template-file /tmp/gateway-target.json \
+                --stack-name dining-gateway-target \
+                --region us-east-1 && echo "✅ Gateway target 생성 완료" || \
+              echo "⚠️  Gateway target 생성 실패 (계속 진행)"
+            else
+              echo "✅ 기존 Gateway target 재사용 ($TARGET_COUNT개)"
+            fi
           fi
 
       - name: Install CDK dependencies
